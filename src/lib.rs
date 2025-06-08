@@ -1,5 +1,5 @@
 use eframe::egui;
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec3, Vec4, Mat4};
 use csgrs::csg::CSG;
 use std::collections::HashSet;
 
@@ -11,6 +11,8 @@ pub struct AluminaApp {
     edges: Vec<(Vec3, Vec3)>,
     wireframe: bool,
     grid: bool,
+    /// CNC working area dimensions (mm)
+    work_size: Vec3, // x, y, z
 }
 
 impl AluminaApp {
@@ -18,7 +20,7 @@ impl AluminaApp {
         // ── build a cube with csgrs and collect its unique edges ──────────────
         let mut uniq: HashSet<((i64, i64, i64), (i64, i64, i64))> = HashSet::new();
         //let cube = CSG::<()>::cube(2.0, 2.0, 2.0, None).center();
-        let cube = CSG::<()>::icosahedron(2.0, None).center();
+        let cube = CSG::<()>::icosahedron(20.0, None).center();
 
         for poly in &cube.polygons {
             for (a, b) in poly.edges() {
@@ -48,24 +50,42 @@ impl AluminaApp {
             edges,
             wireframe: false,
             grid: false,
+            work_size: Vec3::new(200.0, 200.0, 200.0), // default 200 × 200 × 200 mm
         }
     }
 }
 
 impl eframe::App for AluminaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-		// ------------------------------------------------------------------
+        // ------------------------------------------------------------------
         // Sidebar
         // ------------------------------------------------------------------
         egui::SidePanel::left("side_panel")
             .resizable(false)
-            .min_width(120.0)
+            .min_width(140.0)
             .show(ctx, |ui| {
                 ui.heading("Controls");
                 ui.separator();
 
                 ui.checkbox(&mut self.wireframe, "wireframe");
                 ui.checkbox(&mut self.grid, "grid");
+                ui.separator();
+
+                ui.collapsing("Work area (mm)", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("X:");
+                        ui.add(egui::DragValue::new(&mut self.work_size.x).speed(1.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Y:");
+                        ui.add(egui::DragValue::new(&mut self.work_size.y).speed(1.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Z:");
+                        ui.add(egui::DragValue::new(&mut self.work_size.z).speed(1.0));
+                    });
+                });
+
                 ui.separator();
 
                 if ui.button("open").clicked() {
@@ -113,33 +133,99 @@ impl eframe::App for AluminaApp {
             // scroll → zoom
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if scroll.abs() > 0.0 {
-                self.zoom = (self.zoom * (1.0 + scroll * 0.001)).clamp(0.2, 5.0);
+                self.zoom = (self.zoom * (1.0 + scroll * 0.001)).clamp(0.0, 500.0);
             }
 
             // ───── Paint ─────
             let painter = ui.painter_at(rect);
-            draw_csgrs_cube(&painter, rect, self);
+            draw_scene(&painter, rect, self);
         });
     }
 }
 
-fn draw_csgrs_cube(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
+/// Build an MVP matrix that always keeps the entire model in front of the camera.
+///
+/// * `zoom` is interpreted as a dolly factor: 1 = default distance, 2 = half the distance, etc.
+/// * `bounds` is the half-extent of the work area or of the model, whichever is larger.
+fn mvp(app: &AluminaApp, rect: egui::Rect) -> Mat4 {
+    // ---------------------------------------------------------------
+    // 1. camera placement
+    // ---------------------------------------------------------------
+    let radius = app.work_size.length() * 0.5;           // world units (mm)
+    let base_eye = radius * 3.0;                         // “far enough” for a 60° FOV
+    let eye = Vec3::new(0.0, 0.0, base_eye / app.zoom);  // dolly with the scroll wheel
+
+    // ---------------------------------------------------------------
+    // 2. matrices
+    // ---------------------------------------------------------------
+    let aspect = rect.width() / rect.height();
+    let proj   = Mat4::perspective_rh_gl(60_f32.to_radians(), aspect, 0.1, 10_000.0);
+    let view   = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+    let model  = Mat4::from_quat(app.rotation);
+
+    proj * view * model      // ← one 4 × 4 matrix to project a point all the way to NDC
+}
+
+/// Project a 3-D vertex with the supplied MVP matrix into egui pixel space.
+/// Returns `None` if the vertex is outside the canonical clip volume.
+fn project(v: Vec3, mvp: Mat4, rect: egui::Rect, pan: egui::Vec2) -> Option<egui::Pos2> {
+    let clip: Vec4 = mvp * v.extend(1.0);
+    if clip.w <= 0.0 {                       // behind the eye
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;      // (−1…1)^3
+    if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 || ndc.z < 0.0 || ndc.z > 1.0 {
+        return None;                         // outside the cube -> clip segment later
+    }
+
+    // NDC → pixel
+    let half = egui::vec2(rect.width(), rect.height()) * 0.5;
+    Some(rect.center()
+         + pan
+         + egui::vec2(ndc.x * half.x, -ndc.y * half.y))
+}
+
+fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
+    let mvp = mvp(app, rect);
+
+    // ───────────── GRID ─────────────
+    if app.grid {
+        let half_x = app.work_size.x * 0.5;
+        let half_y = app.work_size.y * 0.5;
+
+        let mut draw_line = |a: Vec3, b: Vec3, stroke: egui::Stroke| {
+            if let (Some(pa), Some(pb)) = (project(a, mvp, rect, app.translation),
+                                           project(b, mvp, rect, app.translation)) {
+                painter.line_segment([pa, pb], stroke);
+            }
+        };
+
+        let mut x = -half_x;
+        while x <= half_x + 0.1 {
+            let major = (x.round() as i32) % 100 == 0;
+            let col   = if major { egui::Color32::WHITE } else { egui::Color32::from_gray(80) };
+            draw_line(Vec3::new(x, -half_y, 0.0), Vec3::new(x, half_y, 0.0),
+                      egui::Stroke::new(1.0, col));
+            x += 10.0;
+        }
+
+        let mut y = -half_y;
+        while y <= half_y + 0.1 {
+            let major = (y.round() as i32) % 100 == 0;
+            let col   = if major { egui::Color32::WHITE } else { egui::Color32::from_gray(80) };
+            draw_line(Vec3::new(-half_x, y, 0.0), Vec3::new(half_x, y, 0.0),
+                      egui::Stroke::new(1.0, col));
+            y += 10.0;
+        }
+    }
+
+    // ───────────── MODEL ─────────────
     let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-    let size = rect.width().min(rect.height()) * 0.25 * app.zoom;
-
-	// basic perspective projection
-	let dist = 4.0;
-
-	let project = |v: Vec3| {
-		let rotated = app.rotation * v;
-		let scale = dist / (dist - rotated.z);
-		let p = egui::vec2(rotated.x * scale, rotated.y * scale);
-		let offset = (egui::vec2(p.x, -p.y) * size) + app.translation;
-		rect.center() + offset
-	};
-
     for &(a, b) in &app.edges {
-        painter.line_segment([project(a), project(b)], stroke);
+        if let (Some(pa), Some(pb)) = (project(a, mvp, rect, app.translation),
+                                       project(b, mvp, rect, app.translation)) {
+            painter.line_segment([pa, pb], stroke);
+        }
     }
 }
 
@@ -178,4 +264,3 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| Box::new(AluminaApp::new(cc))),
     )
 }
-

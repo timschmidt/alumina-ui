@@ -9,5 +9,5 @@ cargo install trunk
 
 ## run
 ```shell
-trunk serve --open
+trunk serve --open --release
 ```
