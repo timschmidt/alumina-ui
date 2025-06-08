@@ -236,34 +236,66 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
         };
 
     // ───────────── GRID ─────────────
-    if app.grid {
-        let half_x = app.work_size.x * 0.5;
-        let half_y = app.work_size.y * 0.5;
+	if app.grid {
+		let half_x = app.work_size.x * 0.5;
+		let half_y = app.work_size.y * 0.5;
 
-        let mut x = -half_x;
-        while x <= half_x + 0.1 {
-            let major = (x.round() as i32) % 100 == 0;
-            let col   = if major { egui::Color32::WHITE }
-                                   else { egui::Color32::from_gray(80) };
-            draw_line(
-                Vec3::new(x, -half_y, 0.0),
-                Vec3::new(x,  half_y, 0.0),
-                egui::Stroke::new(1.0, col));
-            x += 10.0;
-        }
+		// vertical grid lines ────────────────────────────────────────────────
+		let mut x   = -half_x;
+		let mut idx = 0usize;                 // ← count drawn lines
+		while x <= half_x + 0.1 {
+			let major = idx % 10 == 0;        // every 10th line → white
+			let col   = if major { egui::Color32::WHITE }
+								 else { egui::Color32::from_gray(80) };
+			draw_line(
+				Vec3::new(x, -half_y, 0.0),
+				Vec3::new(x,  half_y, 0.0),
+				egui::Stroke::new(1.0, col),
+			);
+			x   += 10.0;
+			idx += 1;
+		}
 
-        let mut y = -half_y;
-        while y <= half_y + 0.1 {
-            let major = (y.round() as i32) % 100 == 0;
-            let col   = if major { egui::Color32::WHITE }
-                                   else { egui::Color32::from_gray(80) };
-            draw_line(
-                Vec3::new(-half_x, y, 0.0),
-                Vec3::new( half_x, y, 0.0),
-                egui::Stroke::new(1.0, col));
-            y += 10.0;
-        }
-    }
+		// horizontal grid lines ──────────────────────────────────────────────
+		let mut y   = -half_y;
+		let mut idx = 0usize;                 // reset counter for rows
+		while y <= half_y + 0.1 {
+			let major = idx % 10 == 0;
+			let col   = if major { egui::Color32::WHITE }
+								 else { egui::Color32::from_gray(80) };
+			draw_line(
+				Vec3::new(-half_x, y, 0.0),
+				Vec3::new( half_x, y, 0.0),
+				egui::Stroke::new(1.0, col),
+			);
+			y   += 10.0;
+			idx += 1;
+		}
+		
+		// ────────────────────── WORK-AREA CUBOID ──────────────────────
+		let top_z  = app.work_size.z;                       // height of the box
+		let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_GRAY);
+
+		// Four bottom corners (z = 0)
+		let bottom = [
+			Vec3::new(-half_x, -half_y, 0.0),
+			Vec3::new( half_x, -half_y, 0.0),
+			Vec3::new( half_x,  half_y, 0.0),
+			Vec3::new(-half_x,  half_y, 0.0),
+		];
+
+		// 1️⃣ Vertical edges
+		for &p in &bottom {
+			draw_line(p, p + Vec3::Z * top_z, stroke);
+		}
+
+		// 2️⃣ Top rectangle (horizontal edges)
+		for i in 0..4 {
+			let a = bottom[i]             + Vec3::Z * top_z;
+			let b = bottom[(i + 1) % 4]   + Vec3::Z * top_z;
+			draw_line(a, b, stroke);
+		}
+	}
 
     // ───────────── MODEL ─────────────
     let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
