@@ -2,6 +2,7 @@ use eframe::egui;
 use glam::{Quat, Vec3, Vec4, Mat4};
 use csgrs::csg::CSG;
 use std::collections::HashSet;
+use std::f32::consts::{PI, FRAC_PI_2};
 
 #[derive(Default)]
 pub struct AluminaApp {
@@ -49,7 +50,7 @@ impl AluminaApp {
             zoom: 1.0,
             edges,
             wireframe: false,
-            grid: false,
+            grid: true,
             work_size: Vec3::new(200.0, 200.0, 200.0), // default 200 × 200 × 200 mm
         }
     }
@@ -65,8 +66,19 @@ impl eframe::App for AluminaApp {
             .min_width(140.0)
             .show(ctx, |ui| {
                 ui.heading("Controls");
-                ui.separator();
 
+				ui.separator();
+				ui.label("Snap view");
+				ui.horizontal_wrapped(|ui| {
+					if ui.button("Front").clicked()  { self.rotation = Quat::from_rotation_x(-FRAC_PI_2); }
+					if ui.button("Back").clicked()   { self.rotation = Quat::from_rotation_x(FRAC_PI_2); }
+					if ui.button("Left").clicked()   { self.rotation = Quat::from_rotation_y(FRAC_PI_2); }
+					if ui.button("Right").clicked()  { self.rotation = Quat::from_rotation_y(-FRAC_PI_2); }
+					if ui.button("Top").clicked()    { self.rotation = Quat::IDENTITY; }
+					if ui.button("Bottom").clicked() { self.rotation = Quat::from_rotation_y(PI); }
+				});
+
+                ui.separator();
                 ui.checkbox(&mut self.wireframe, "wireframe");
                 ui.checkbox(&mut self.grid, "grid");
                 ui.separator();
@@ -163,7 +175,7 @@ fn mvp(app: &AluminaApp, rect: egui::Rect) -> Mat4 {
     let view   = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
     let model  = Mat4::from_quat(app.rotation);
 
-    proj * view * model      // ← one 4 × 4 matrix to project a point all the way to NDC
+    proj * view * model // one 4 × 4 matrix to project a point all the way to NDC
 }
 
 /// Project a 3-D vertex with the supplied MVP matrix into egui pixel space.
@@ -172,15 +184,15 @@ fn mvp(app: &AluminaApp, rect: egui::Rect) -> Mat4 {
 fn project(v: Vec3, mvp: Mat4, rect: egui::Rect, pan: egui::Vec2) -> Option<egui::Pos2> {
     let clip: Vec4 = mvp * v.extend(1.0);
 
-    // ── 1. trivial reject: behind the eye or outside near/far ──────────────
+    // trivial reject: behind the eye or outside near/far
     if clip.w <= 0.0 || clip.z < 0.0 || clip.z > clip.w {
         return None;
     }
 
-    // ── 2. perspective divide → Normalised Device Coordinates ──────────────
-    let ndc = clip.truncate() / clip.w;                 // (-∞ … +∞) after we removed the test
+    // perspective divide → Normalised Device Coordinates
+    let ndc = clip.truncate() / clip.w; // (-∞ … +∞) after we removed the test
 
-    // ── 3. NDC → egui pixels ───────────────────────────────────────────────
+    // NDC → egui pixels
     let half = egui::vec2(rect.width(), rect.height()) * 0.5;
     Some(rect.center() + pan + egui::vec2(ndc.x * half.x, -ndc.y * half.y))
 }
@@ -193,8 +205,8 @@ fn clip_segment(mut a: Vec4, mut b: Vec4) -> Option<(Vec4, Vec4)> {
     let d = b - a;
 
     let clip = |p: f32, q: f32, t0: &mut f32, t1: &mut f32| -> bool {
-        if p == 0.0 {             // parallel to plane
-            q >= 0.0              // keep only if inside
+        if p == 0.0 { // parallel to plane
+            q >= 0.0 // keep only if inside
         } else {
             let r = q / p;
             if p < 0.0 { *t0 = t0.max(r); *t0 <= *t1 }
@@ -227,7 +239,7 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
     // one closure that does proper clipping before it paints
     let mut draw_line =
         |a: Vec3, b: Vec3, stroke: egui::Stroke| {
-            let a_c = mvp * a.extend(1.0);     // world → clip
+            let a_c = mvp * a.extend(1.0); // world → clip
             let b_c = mvp * b.extend(1.0);
 
             if let Some((ca, cb)) = clip_segment(a_c, b_c) {
@@ -242,9 +254,9 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
 
 		// vertical grid lines ────────────────────────────────────────────────
 		let mut x   = -half_x;
-		let mut idx = 0usize;                 // ← count drawn lines
+		let mut idx = 0usize; // count drawn lines
 		while x <= half_x + 0.1 {
-			let major = idx % 10 == 0;        // every 10th line → white
+			let major = idx % 10 == 0; // every 10th line is white
 			let col   = if major { egui::Color32::WHITE }
 								 else { egui::Color32::from_gray(80) };
 			draw_line(
@@ -258,7 +270,7 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
 
 		// horizontal grid lines ──────────────────────────────────────────────
 		let mut y   = -half_y;
-		let mut idx = 0usize;                 // reset counter for rows
+		let mut idx = 0usize; // reset counter for rows
 		while y <= half_y + 0.1 {
 			let major = idx % 10 == 0;
 			let col   = if major { egui::Color32::WHITE }
@@ -273,7 +285,7 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
 		}
 		
 		// ────────────────────── WORK-AREA CUBOID ──────────────────────
-		let top_z  = app.work_size.z;                       // height of the box
+		let top_z  = app.work_size.z; // height of the box
 		let stroke = egui::Stroke::new(1.5, egui::Color32::LIGHT_GRAY);
 
 		// Four bottom corners (z = 0)
@@ -284,12 +296,12 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
 			Vec3::new(-half_x,  half_y, 0.0),
 		];
 
-		// 1️⃣ Vertical edges
+		// Vertical edges
 		for &p in &bottom {
 			draw_line(p, p + Vec3::Z * top_z, stroke);
 		}
 
-		// 2️⃣ Top rectangle (horizontal edges)
+		// Top rectangle (horizontal edges)
 		for i in 0..4 {
 			let a = bottom[i]             + Vec3::Z * top_z;
 			let b = bottom[(i + 1) % 4]   + Vec3::Z * top_z;
@@ -300,7 +312,7 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
     // ───────────── MODEL ─────────────
     let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
     for &(a_w, b_w) in &app.edges {
-        draw_line(a_w, b_w, stroke);            // same helper, same rules
+        draw_line(a_w, b_w, stroke); // same helper, same rules
     }
 }
 
