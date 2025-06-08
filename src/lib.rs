@@ -21,7 +21,7 @@ impl AluminaApp {
         // ── build a cube with csgrs and collect its unique edges ──────────────
         let mut uniq: HashSet<((i64, i64, i64), (i64, i64, i64))> = HashSet::new();
         //let cube = CSG::<()>::cube(2.0, 2.0, 2.0, None).center();
-        let cube = CSG::<()>::icosahedron(20.0, None).center();
+        let cube = CSG::<()>::icosahedron(100.0, None).float();
 
         for poly in &cube.polygons {
             for (a, b) in poly.edges() {
@@ -228,24 +228,43 @@ fn clip_segment(mut a: Vec4, mut b: Vec4) -> Option<(Vec4, Vec4)> {
 fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
     let mvp = mvp(app, rect);
 
-    // one closure that turns a clip-space vertex into an egui point
-    let to_screen = |p: Vec4| {
-        let ndc  = p.truncate() / p.w;
-        let half = egui::vec2(rect.width(), rect.height()) * 0.5;
-        rect.center() + app.translation +
-            egui::vec2(ndc.x * half.x, -ndc.y * half.y)
+    // ----------------------------------------------------------------
+    // 1. screen-pixels  →  NDC offset  (pan is stored in pixels)
+    // ----------------------------------------------------------------
+    let half = egui::vec2(rect.width(), rect.height()) * 0.5;
+    let pan_ndc = egui::vec2(
+        app.translation.x / half.x,      //  1 NDC unit = half.width  pixels
+       -app.translation.y / half.y,      //  Y axis is flipped on screen
+    );
+
+    // helper: add the pan directly in clip-space ---------------------
+    let apply_pan = |c: Vec4, pan: egui::Vec2| -> Vec4 {
+        // x' = x + pan_ndc.x·w   (same for y)
+        Vec4::new(c.x + pan.x * c.w,
+                  c.y + pan.y * c.w,
+                  c.z,
+                  c.w)
     };
 
-    // one closure that does proper clipping before it paints
-    let mut draw_line =
-        |a: Vec3, b: Vec3, stroke: egui::Stroke| {
-            let a_c = mvp * a.extend(1.0); // world → clip
-            let b_c = mvp * b.extend(1.0);
+    // ----------------------------------------------------------------
+    // 2. clip-space  →  screen-pixels   (no +app.translation anymore!)
+    // ----------------------------------------------------------------
+    let to_screen = |c: Vec4| {
+        let ndc  = c.truncate() / c.w;
+        rect.center() + egui::vec2(ndc.x * half.x, -ndc.y * half.y)
+    };
 
-            if let Some((ca, cb)) = clip_segment(a_c, b_c) {
-                painter.line_segment([to_screen(ca), to_screen(cb)], stroke);
-            }
-        };
+    // ----------------------------------------------------------------
+    // 3. draw helper that first shifts, then clips, then paints
+    // ----------------------------------------------------------------
+    let mut draw_line = |a: Vec3, b: Vec3, stroke: egui::Stroke| {
+        let a_c = apply_pan(mvp * a.extend(1.0), pan_ndc);
+        let b_c = apply_pan(mvp * b.extend(1.0), pan_ndc);
+
+        if let Some((ca, cb)) = clip_segment(a_c, b_c) {
+            painter.line_segment([to_screen(ca), to_screen(cb)], stroke);
+        }
+    };
 
     // ───────────── GRID ─────────────
 	if app.grid {
