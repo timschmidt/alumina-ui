@@ -167,65 +167,108 @@ fn mvp(app: &AluminaApp, rect: egui::Rect) -> Mat4 {
 }
 
 /// Project a 3-D vertex with the supplied MVP matrix into egui pixel space.
-/// Returns `None` if the vertex is outside the canonical clip volume.
+/// Returns `None` only when the point is not renderable at all
+/// (i.e. behind the camera or outside the near/far planes).
 fn project(v: Vec3, mvp: Mat4, rect: egui::Rect, pan: egui::Vec2) -> Option<egui::Pos2> {
     let clip: Vec4 = mvp * v.extend(1.0);
-    if clip.w <= 0.0 {                       // behind the eye
+
+    // ── 1. trivial reject: behind the eye or outside near/far ──────────────
+    if clip.w <= 0.0 || clip.z < 0.0 || clip.z > clip.w {
         return None;
     }
-    let ndc = clip.truncate() / clip.w;      // (−1…1)^3
-    if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 || ndc.z < 0.0 || ndc.z > 1.0 {
-        return None;                         // outside the cube -> clip segment later
-    }
 
-    // NDC → pixel
+    // ── 2. perspective divide → Normalised Device Coordinates ──────────────
+    let ndc = clip.truncate() / clip.w;                 // (-∞ … +∞) after we removed the test
+
+    // ── 3. NDC → egui pixels ───────────────────────────────────────────────
     let half = egui::vec2(rect.width(), rect.height()) * 0.5;
-    Some(rect.center()
-         + pan
-         + egui::vec2(ndc.x * half.x, -ndc.y * half.y))
+    Some(rect.center() + pan + egui::vec2(ndc.x * half.x, -ndc.y * half.y))
+}
+
+/// Clip AB to the canonical volume -w≤x≤w, -w≤y≤w, 0≤z≤w.
+/// Returns None if the segment is completely outside.
+fn clip_segment(mut a: Vec4, mut b: Vec4) -> Option<(Vec4, Vec4)> {
+    let mut t0 = 0.0;
+    let mut t1 = 1.0;
+    let d = b - a;
+
+    let clip = |p: f32, q: f32, t0: &mut f32, t1: &mut f32| -> bool {
+        if p == 0.0 {             // parallel to plane
+            q >= 0.0              // keep only if inside
+        } else {
+            let r = q / p;
+            if p < 0.0 { *t0 = t0.max(r); *t0 <= *t1 }
+            else        { *t1 = t1.min(r); *t0 <= *t1 }
+        }
+    };
+
+    // six planes
+    if !clip(-d.x - d.w,  a.x + a.w, &mut t0, &mut t1) { return None; } // x ≥ -w
+    if !clip( d.x - d.w, -a.x + a.w, &mut t0, &mut t1) { return None; } // x ≤  w
+    if !clip(-d.y - d.w,  a.y + a.w, &mut t0, &mut t1) { return None; } // y ≥ -w
+    if !clip( d.y - d.w, -a.y + a.w, &mut t0, &mut t1) { return None; } // y ≤  w
+    if !clip(-d.z,        a.z,        &mut t0, &mut t1) { return None; } // z ≥  0
+    if !clip( d.z - d.w, -a.z + a.w, &mut t0, &mut t1) { return None; } // z ≤  w
+
+    Some((a + d * t0, a + d * t1))
 }
 
 fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
     let mvp = mvp(app, rect);
+
+    // one closure that turns a clip-space vertex into an egui point
+    let to_screen = |p: Vec4| {
+        let ndc  = p.truncate() / p.w;
+        let half = egui::vec2(rect.width(), rect.height()) * 0.5;
+        rect.center() + app.translation +
+            egui::vec2(ndc.x * half.x, -ndc.y * half.y)
+    };
+
+    // one closure that does proper clipping before it paints
+    let mut draw_line =
+        |a: Vec3, b: Vec3, stroke: egui::Stroke| {
+            let a_c = mvp * a.extend(1.0);     // world → clip
+            let b_c = mvp * b.extend(1.0);
+
+            if let Some((ca, cb)) = clip_segment(a_c, b_c) {
+                painter.line_segment([to_screen(ca), to_screen(cb)], stroke);
+            }
+        };
 
     // ───────────── GRID ─────────────
     if app.grid {
         let half_x = app.work_size.x * 0.5;
         let half_y = app.work_size.y * 0.5;
 
-        let mut draw_line = |a: Vec3, b: Vec3, stroke: egui::Stroke| {
-            if let (Some(pa), Some(pb)) = (project(a, mvp, rect, app.translation),
-                                           project(b, mvp, rect, app.translation)) {
-                painter.line_segment([pa, pb], stroke);
-            }
-        };
-
         let mut x = -half_x;
         while x <= half_x + 0.1 {
             let major = (x.round() as i32) % 100 == 0;
-            let col   = if major { egui::Color32::WHITE } else { egui::Color32::from_gray(80) };
-            draw_line(Vec3::new(x, -half_y, 0.0), Vec3::new(x, half_y, 0.0),
-                      egui::Stroke::new(1.0, col));
+            let col   = if major { egui::Color32::WHITE }
+                                   else { egui::Color32::from_gray(80) };
+            draw_line(
+                Vec3::new(x, -half_y, 0.0),
+                Vec3::new(x,  half_y, 0.0),
+                egui::Stroke::new(1.0, col));
             x += 10.0;
         }
 
         let mut y = -half_y;
         while y <= half_y + 0.1 {
             let major = (y.round() as i32) % 100 == 0;
-            let col   = if major { egui::Color32::WHITE } else { egui::Color32::from_gray(80) };
-            draw_line(Vec3::new(-half_x, y, 0.0), Vec3::new(half_x, y, 0.0),
-                      egui::Stroke::new(1.0, col));
+            let col   = if major { egui::Color32::WHITE }
+                                   else { egui::Color32::from_gray(80) };
+            draw_line(
+                Vec3::new(-half_x, y, 0.0),
+                Vec3::new( half_x, y, 0.0),
+                egui::Stroke::new(1.0, col));
             y += 10.0;
         }
     }
 
     // ───────────── MODEL ─────────────
     let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-    for &(a, b) in &app.edges {
-        if let (Some(pa), Some(pb)) = (project(a, mvp, rect, app.translation),
-                                       project(b, mvp, rect, app.translation)) {
-            painter.line_segment([pa, pb], stroke);
-        }
+    for &(a_w, b_w) in &app.edges {
+        draw_line(a_w, b_w, stroke);            // same helper, same rules
     }
 }
 
