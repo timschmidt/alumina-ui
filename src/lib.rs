@@ -2,12 +2,19 @@ use eframe::egui;
 use glam::{Quat, Vec3, Vec4, Mat4};
 use csgrs::csg::CSG;
 use std::f32::consts::{PI, FRAC_PI_2};
+use rfd::AsyncFileDialog;
+use std::{
+    future::Future,
+    sync::{Arc, Mutex},
+};
 
 pub struct AluminaApp {
     rotation: Quat,
     translation: egui::Vec2,
     zoom: f32,
 	model: CSG<()>,
+	workpiece_data: Arc<Mutex<Option<Vec<u8>>>>,
+    model_data: Arc<Mutex<Option<Vec<u8>>>>,
     wireframe: bool,
     grid: bool,
     /// CNC working area dimensions (mm)
@@ -23,6 +30,8 @@ impl AluminaApp {
             translation: egui::Vec2::ZERO,
             zoom: 1.0,
             model,
+            workpiece_data: Arc::new(Mutex::new(None)),
+            model_data: Arc::new(Mutex::new(None)),
             wireframe: false,
             grid: true,
             work_size: Vec3::new(200.0, 200.0, 200.0), // default 200 × 200 × 200 mm
@@ -75,13 +84,20 @@ impl eframe::App for AluminaApp {
                 ui.separator();
 
                 if ui.button("load workpiece").clicked() {
-                    // TODO: implement load workpiece action
-                    log::info!("'load workpiece' button pressed");
-                }
-                if ui.button("load model").clicked() {
-                    // TODO: implement load model action
-                    log::info!("'load model' button pressed");
-                }
+					spawn_file_picker(
+						Arc::clone(&self.workpiece_data),
+						"Workpiece mesh (stl,dxf)",
+						&["stl", "dxf"],
+					);
+				}
+
+				if ui.button("load model").clicked() {
+					spawn_file_picker(
+						Arc::clone(&self.model_data),
+						"Model mesh (stl,dxf)",
+						&["stl", "dxf"],
+					);
+				}
                 if ui.button("toolpath").clicked() {
                     // TODO: implement toolpath action
                     log::info!("'toolpath' button pressed");
@@ -95,6 +111,28 @@ impl eframe::App for AluminaApp {
                     self.wireframe = !self.wireframe;
                 }
             });
+            
+		// ── workpiece ────────────────────────────────────────────────
+        if let Some(bytes) = self.workpiece_data.lock().unwrap().take() {
+            match load_csg_from_bytes(&bytes) {
+                Some(csg) => {
+                    self.model = csg;
+                    log::info!("Workpiece geometry loaded ({} bytes)", bytes.len());
+                }
+                None => log::error!("Could not parse workpiece file – unsupported or corrupt"),
+            }
+        }
+
+        // ── model ────────────────────────────────────────────────────
+        if let Some(bytes) = self.model_data.lock().unwrap().take() {
+            match load_csg_from_bytes(&bytes) {
+                Some(csg) => {
+                    self.model = csg;
+                    log::info!("Model geometry loaded ({} bytes)", bytes.len());
+                }
+                None => log::error!("Could not parse model file – unsupported or corrupt"),
+            }
+        }
 
         // ------------------------------------------------------------------
         // Main viewport
@@ -156,28 +194,9 @@ fn mvp(app: &AluminaApp, rect: egui::Rect) -> Mat4 {
     proj * view * model // one 4 × 4 matrix to project a point all the way to NDC
 }
 
-/// Project a 3-D vertex with the supplied MVP matrix into egui pixel space.
-/// Returns `None` only when the point is not renderable at all
-/// (i.e. behind the camera or outside the near/far planes).
-fn project(v: Vec3, mvp: Mat4, rect: egui::Rect, pan: egui::Vec2) -> Option<egui::Pos2> {
-    let clip: Vec4 = mvp * v.extend(1.0);
-
-    // trivial reject: behind the eye or outside near/far
-    if clip.w <= 0.0 || clip.z < 0.0 || clip.z > clip.w {
-        return None;
-    }
-
-    // perspective divide → Normalised Device Coordinates
-    let ndc = clip.truncate() / clip.w; // (-∞ … +∞) after we removed the test
-
-    // NDC → egui pixels
-    let half = egui::vec2(rect.width(), rect.height()) * 0.5;
-    Some(rect.center() + pan + egui::vec2(ndc.x * half.x, -ndc.y * half.y))
-}
-
 /// Clip AB to the canonical volume -w≤x≤w, -w≤y≤w, 0≤z≤w.
 /// Returns None if the segment is completely outside.
-fn clip_segment(mut a: Vec4, mut b: Vec4) -> Option<(Vec4, Vec4)> {
+fn clip_segment(a: Vec4, b: Vec4) -> Option<(Vec4, Vec4)> {
     let mut t0 = 0.0;
     let mut t1 = 1.0;
     let d = b - a;
@@ -235,7 +254,7 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
     // ----------------------------------------------------------------
     // 3. draw helper that first shifts, then clips, then paints
     // ----------------------------------------------------------------
-    let mut draw_line = |a: Vec3, b: Vec3, stroke: egui::Stroke| {
+    let draw_line = |a: Vec3, b: Vec3, stroke: egui::Stroke| {
         let a_c = apply_pan(mvp * a.extend(1.0), pan_ndc);
         let b_c = apply_pan(mvp * b.extend(1.0), pan_ndc);
 
@@ -321,6 +340,36 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
 	}
 }
 
+fn spawn_file_picker(
+    target: Arc<Mutex<Option<Vec<u8>>>>,
+    filter_name: &'static str,
+    exts: &'static [&'static str],   // ← now the slice is 'static too
+) {
+    execute(async move {
+        if let Some(handle) = AsyncFileDialog::new()
+            .add_filter(filter_name, exts)
+            .pick_file()
+            .await
+        {
+            let bytes = handle.read().await;
+            *target.lock().unwrap() = Some(bytes);
+        }
+    });
+}
+
+
+fn load_csg_from_bytes(bytes: &[u8]) -> Option<CSG<()>> {
+    if let Ok(csg) = CSG::<()>::from_stl(bytes, None) {
+        return Some(csg);
+    }
+
+    if let Ok(csg) = CSG::<()>::from_dxf(bytes, None) {
+        return Some(csg);
+    }
+
+    None
+}
+
 // ── Web entry‑point ──
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -355,4 +404,14 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(|cc| Box::new(AluminaApp::new(cc))),
     )
+}
+
+// Executes an async future without blocking the egui thread
+#[cfg(not(target_arch = "wasm32"))]
+fn execute<F: Future<Output = ()> + Send + 'static>(f: F) {
+    std::thread::spawn(move || futures::executor::block_on(f));
+}
+#[cfg(target_arch = "wasm32")]
+fn execute<F: Future<Output = ()> + 'static>(f: F) {
+    wasm_bindgen_futures::spawn_local(f);
 }
