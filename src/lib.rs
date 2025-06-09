@@ -181,7 +181,9 @@ impl eframe::App for AluminaApp {
             match load_csg_from_bytes(&bytes) {
                 Some(csg) => {
                     self.base_model = csg;
-                    self.refresh_scaled_model();
+                    // ── force a rebuild ─────────────────────────────────────────────
+					self.applied_scale = Vec3::NEG_ONE;          // anything ≠ model_scale works
+					self.refresh_scaled_model();                 // now `model` is up-to-date
                     log::info!("Workpiece geometry loaded ({} bytes)", bytes.len());
                 }
                 None => log::error!("Could not parse workpiece file – unsupported or corrupt"),
@@ -197,7 +199,9 @@ impl eframe::App for AluminaApp {
             match load_csg_from_bytes(&bytes) {
                 Some(csg) => {
                     self.base_model = csg;
-                    self.refresh_scaled_model();
+                    // ── force a rebuild ─────────────────────────────────────────────
+					self.applied_scale = Vec3::NEG_ONE;          // anything ≠ model_scale works
+					self.refresh_scaled_model();                 // now `model` is up-to-date
                     log::info!("Model geometry loaded ({} bytes)", bytes.len());
                 }
                 None => log::error!("Could not parse model file – unsupported or corrupt"),
