@@ -1,15 +1,13 @@
 use eframe::egui;
 use glam::{Quat, Vec3, Vec4, Mat4};
 use csgrs::csg::CSG;
-use std::collections::HashSet;
 use std::f32::consts::{PI, FRAC_PI_2};
 
-#[derive(Default)]
 pub struct AluminaApp {
     rotation: Quat,
     translation: egui::Vec2,
     zoom: f32,
-    edges: Vec<(Vec3, Vec3)>,
+	model: CSG<()>,
     wireframe: bool,
     grid: bool,
     /// CNC working area dimensions (mm)
@@ -18,37 +16,13 @@ pub struct AluminaApp {
 
 impl AluminaApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        // ── build a cube with csgrs and collect its unique edges ──────────────
-        let mut uniq: HashSet<((i64, i64, i64), (i64, i64, i64))> = HashSet::new();
-        //let cube = CSG::<()>::cube(2.0, 2.0, 2.0, None).center();
-        let cube = CSG::<()>::icosahedron(100.0, None).float();
-
-        for poly in &cube.polygons {
-            for (a, b) in poly.edges() {
-                // key ≤---> canonicalised (small-grid-snapped) pair
-                let snap = |p: &csgrs::float_types::Real| (*p * 1e5).round() as i64;
-                let key = {
-                    let ka = (snap(&a.pos.x), snap(&a.pos.y), snap(&a.pos.z));
-                    let kb = (snap(&b.pos.x), snap(&b.pos.y), snap(&b.pos.z));
-                    if ka < kb { (ka, kb) } else { (kb, ka) }
-                };
-                uniq.insert(key);
-            }
-        }
-
-        let edges = uniq
-            .into_iter()
-            .map(|(ka, kb)| {
-                let v = |(x, y, z): (i64, i64, i64)| Vec3::new(x as f32, y as f32, z as f32) / 1e5;
-                (v(ka), v(kb))
-            })
-            .collect();
+        let model = CSG::<()>::icosahedron(100.0, None).float();
 
         Self {
             rotation: Quat::IDENTITY,
             translation: egui::Vec2::ZERO,
             zoom: 1.0,
-            edges,
+            model,
             wireframe: false,
             grid: true,
             work_size: Vec3::new(200.0, 200.0, 200.0), // default 200 × 200 × 200 mm
@@ -100,9 +74,13 @@ impl eframe::App for AluminaApp {
 
                 ui.separator();
 
-                if ui.button("open").clicked() {
-                    // TODO: implement open action
-                    log::info!("'open' button pressed");
+                if ui.button("load workpiece").clicked() {
+                    // TODO: implement load workpiece action
+                    log::info!("'load workpiece' button pressed");
+                }
+                if ui.button("load model").clicked() {
+                    // TODO: implement load model action
+                    log::info!("'load model' button pressed");
                 }
                 if ui.button("toolpath").clicked() {
                     // TODO: implement toolpath action
@@ -330,9 +308,17 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
 
     // ───────────── MODEL ─────────────
     let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
-    for &(a_w, b_w) in &app.edges {
-        draw_line(a_w, b_w, stroke); // same helper, same rules
-    }
+
+	for poly in &app.model.polygons {
+		// `poly.edges()` returns iterator over (`&Vertex`, `&Vertex`)
+		for (a, b) in poly.edges() {
+			// csgrs::float_types::Real → f32 for glam
+			let a_w = Vec3::new(a.pos.x as f32, a.pos.y as f32, a.pos.z as f32);
+			let b_w = Vec3::new(b.pos.x as f32, b.pos.y as f32, b.pos.z as f32);
+
+			draw_line(a_w, b_w, stroke);
+		}
+	}
 }
 
 // ── Web entry‑point ──
