@@ -12,29 +12,53 @@ pub struct AluminaApp {
     rotation: Quat,
     translation: egui::Vec2,
     zoom: f32,
-	model: CSG<()>,
-	workpiece_data: Arc<Mutex<Option<Vec<u8>>>>,
+    /// Un‑scaled geometry as loaded from disk (or the default icosahedron).
+    base_model: CSG<()>,
+    /// Geometry that is actually rendered (scaled version of `base_model`).
+    model: CSG<()>,
+    /// Desired scale factors set by the user (per‑axis, 1 = no change).
+    model_scale: Vec3,
+    /// Last scale that was applied to `model` – lets us avoid needless rebuilds.
+    applied_scale: Vec3,
+    workpiece_data: Arc<Mutex<Option<Vec<u8>>>>,
     model_data: Arc<Mutex<Option<Vec<u8>>>>,
     wireframe: bool,
     grid: bool,
     /// CNC working area dimensions (mm)
     work_size: Vec3, // x, y, z
+    layer_height: f32,
 }
 
 impl AluminaApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let model = CSG::<()>::icosahedron(100.0, None).float();
+        let base_model = CSG::<()>::icosahedron(100.0, None).float();
+        let model_scale = Vec3::new(1.0, 1.0, 1.0);
 
         Self {
             rotation: Quat::IDENTITY,
             translation: egui::Vec2::ZERO,
             zoom: 1.0,
-            model,
+            base_model: base_model.clone(),
+            model: base_model,
+            model_scale,
+            applied_scale: model_scale,
             workpiece_data: Arc::new(Mutex::new(None)),
             model_data: Arc::new(Mutex::new(None)),
             wireframe: false,
             grid: true,
-            work_size: Vec3::new(200.0, 200.0, 200.0), // default 200 × 200 × 200 mm
+            work_size: Vec3::new(200.0, 200.0, 200.0),
+            layer_height: 0.20,
+        }
+    }
+    
+    /// Re‑creates the renderable `model` if the requested scale has changed.
+    fn refresh_scaled_model(&mut self) {
+        if self.model_scale != self.applied_scale {
+            self.model = self
+                .base_model
+                .clone()
+                .scale(self.model_scale.x.into(), self.model_scale.y.into(), self.model_scale.z.into());
+            self.applied_scale = self.model_scale;
         }
     }
 }
@@ -64,8 +88,35 @@ impl eframe::App for AluminaApp {
                 ui.separator();
                 ui.checkbox(&mut self.wireframe, "wireframe");
                 ui.checkbox(&mut self.grid, "grid");
+                
+                // ────────────── Scale Controls ──────────────
                 ui.separator();
+                ui.collapsing("Model scale", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("X:");
+                        ui.add(egui::DragValue::new(&mut self.model_scale.x)
+                            .speed(0.01)
+                            .clamp_range(0.01..=10.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Y:");
+                        ui.add(egui::DragValue::new(&mut self.model_scale.y)
+                            .speed(0.01)
+                            .clamp_range(0.01..=10.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Z:");
+                        ui.add(egui::DragValue::new(&mut self.model_scale.z)
+                            .speed(0.01)
+                            .clamp_range(0.01..=10.0));
+                    });
 
+                    if ui.button("Reset scale").clicked() {
+                        self.model_scale = Vec3::new(1.0, 1.0, 1.0);
+                    }
+                });
+                
+                ui.separator();
                 ui.collapsing("Work area (mm)", |ui| {
                     ui.horizontal(|ui| {
                         ui.label("X:");
@@ -81,6 +132,15 @@ impl eframe::App for AluminaApp {
                     });
                 });
 
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Layer height (mm):");
+                    ui.add(
+                        egui::DragValue::new(&mut self.layer_height)
+                            .speed(0.01)
+                            .clamp_range(0.01..=10.0),
+                    );
+                });
                 ui.separator();
 
                 if ui.button("load workpiece").clicked() {
@@ -113,26 +173,39 @@ impl eframe::App for AluminaApp {
             });
             
 		// ── workpiece ────────────────────────────────────────────────
-        if let Some(bytes) = self.workpiece_data.lock().unwrap().take() {
+        let workpiece_bytes_opt = {
+            let mut guard = self.workpiece_data.lock().unwrap();
+            guard.take()
+        };
+        if let Some(bytes) = workpiece_bytes_opt {
             match load_csg_from_bytes(&bytes) {
                 Some(csg) => {
-                    self.model = csg;
-                    log::info!("Workpiece geometry loaded ({} bytes)", bytes.len());
+                    self.base_model = csg;
+                    self.refresh_scaled_model();
+                    log::info!("Workpiece geometry loaded ({} bytes)", bytes.len());
                 }
                 None => log::error!("Could not parse workpiece file – unsupported or corrupt"),
             }
         }
 
         // ── model ────────────────────────────────────────────────────
-        if let Some(bytes) = self.model_data.lock().unwrap().take() {
+        let model_bytes_opt = {
+            let mut guard = self.model_data.lock().unwrap();
+            guard.take()
+        };
+        if let Some(bytes) = model_bytes_opt {
             match load_csg_from_bytes(&bytes) {
                 Some(csg) => {
-                    self.model = csg;
-                    log::info!("Model geometry loaded ({} bytes)", bytes.len());
+                    self.base_model = csg;
+                    self.refresh_scaled_model();
+                    log::info!("Model geometry loaded ({} bytes)", bytes.len());
                 }
                 None => log::error!("Could not parse model file – unsupported or corrupt"),
             }
         }
+
+        // Apply scaling if the user changed any of the factors -------------
+        self.refresh_scaled_model();
 
         // ------------------------------------------------------------------
         // Main viewport
@@ -326,7 +399,7 @@ fn draw_scene(painter: &egui::Painter, rect: egui::Rect, app: &AluminaApp) {
 	}
 
     // ───────────── MODEL ─────────────
-    let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE);
+    let stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
 
 	for poly in &app.model.polygons {
 		// `poly.edges()` returns iterator over (`&Vertex`, `&Vertex`)
