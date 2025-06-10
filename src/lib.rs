@@ -44,7 +44,7 @@ impl AluminaApp {
             applied_scale: model_scale,
             workpiece_data: Arc::new(Mutex::new(None)),
             model_data: Arc::new(Mutex::new(None)),
-            wireframe: false,
+            wireframe: true,
             grid: true,
             work_size: Vec3::new(200.0, 200.0, 200.0),
             layer_height: 0.20,
