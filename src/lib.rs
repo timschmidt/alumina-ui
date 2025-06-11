@@ -1,3 +1,5 @@
+mod renderer;
+
 use eframe::egui;
 use glam::{Quat, Vec3, Vec4, Mat4};
 use csgrs::csg::CSG;
@@ -27,6 +29,8 @@ pub struct AluminaApp {
     /// CNC working area dimensions (mm)
     work_size: Vec3, // x, y, z
     layer_height: f32,
+    gpu: Option<Arc<renderer::GpuLines>>,
+    vertex_storage: Vec<f32>,
 }
 
 impl AluminaApp {
@@ -48,6 +52,8 @@ impl AluminaApp {
             grid: true,
             work_size: Vec3::new(200.0, 200.0, 200.0),
             layer_height: 0.20,
+            gpu: None,
+			vertex_storage: Vec::new(),
         }
     }
     
@@ -59,6 +65,44 @@ impl AluminaApp {
                 .clone()
                 .scale(self.model_scale.x.into(), self.model_scale.y.into(), self.model_scale.z.into());
             self.applied_scale = self.model_scale;
+        }
+    }
+}
+
+impl AluminaApp {
+    /// (Re-)builds the VBO if the model, grid or scale changed.
+    unsafe fn sync_buffers(&mut self, gl: &glow::Context) {
+        self.vertex_storage.clear();
+
+        // ── 1) grid (10 mm spacing, ±work_size/2) ───────────────────────
+        if self.grid {
+            let hx = self.work_size.x * 0.5;
+            let hy = self.work_size.y * 0.5;
+            for i in 0..= (self.work_size.x / 10.0) as i32 {
+                let x = -hx + i as f32 * 10.0;
+                self.vertex_storage.extend_from_slice(&[x, -hy, 0.0,  x,  hy, 0.0]);
+            }
+            for i in 0..= (self.work_size.y / 10.0) as i32 {
+                let y = -hy + i as f32 * 10.0;
+                self.vertex_storage.extend_from_slice(&[-hx, y, 0.0,  hx,  y, 0.0]);
+            }
+        }
+
+        // ── 2) model edges ───────────────────────────────────────────────
+        for p in &self.model.polygons {
+            for (a, b) in p.edges() {
+                self.vertex_storage.extend_from_slice(&[
+                    a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,
+                    b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,
+                ]);
+            }
+        }
+
+        // Upload (only when we still own the *single* strong ref)
+        if let Some(gpu_arc) = &mut self.gpu {
+            if let Some(gpu) = Arc::get_mut(gpu_arc) {
+                gpu.upload_vertices(gl, &self.vertex_storage);
+            }
         }
     }
 }
@@ -241,9 +285,38 @@ impl eframe::App for AluminaApp {
                 self.zoom = (self.zoom * (1.0 + scroll * 0.001)).clamp(0.0, 500.0);
             }
 
-            // ───── Paint ─────
-            let painter = ui.painter_at(rect);
-            draw_scene(&painter, rect, self);
+            // ------------------------------------------------------------------
+			// Ask egui for the GL context once per frame
+			// ------------------------------------------------------------------
+			if let Some(gl) = _frame.gl() {
+				// ── 1) create once ─────────────────────────────────────────────
+                if self.gpu.is_none() {
+                    self.gpu = Some(Arc::new(unsafe { renderer::GpuLines::new(gl) }));
+                }
+
+                // ── 2) keep vertex buffer in sync ─────────────────────────────
+                unsafe { self.sync_buffers(gl) };
+
+                // ── 3) schedule GL paint right after egui’s own meshes ────────
+                if let Some(gpu_arc) = &self.gpu {
+                    let gpu_for_cb = gpu_arc.clone(); // Arc<T> is Send + Sync
+                    let mvp = mvp(self, rect);        // copy for the closure
+
+                    let callback = egui_glow::CallbackFn::new(move |_info, painter| {
+						unsafe {
+							gpu_for_cb.paint(painter.gl(), mvp);
+						}
+                    });
+
+                    ui.painter().add(egui::PaintCallback {
+                        rect,
+                        callback: Arc::new(callback),
+                    });
+                }
+			} else {
+				// very old GPUs / CI: fall back to the CPU clipper
+				draw_scene(ui.painter(), rect, self);
+			}
         });
     }
 }
