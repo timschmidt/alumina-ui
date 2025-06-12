@@ -75,26 +75,41 @@ impl AluminaApp {
         self.vertex_storage.clear();
 
         // ── 1) grid (10 mm spacing, ±work_size/2) ───────────────────────
-        if self.grid {
-            let hx = self.work_size.x * 0.5;
-            let hy = self.work_size.y * 0.5;
-            for i in 0..= (self.work_size.x / 10.0) as i32 {
-                let x = -hx + i as f32 * 10.0;
-                self.vertex_storage.extend_from_slice(&[x, -hy, 0.0,  x,  hy, 0.0]);
-            }
-            for i in 0..= (self.work_size.y / 10.0) as i32 {
-                let y = -hy + i as f32 * 10.0;
-                self.vertex_storage.extend_from_slice(&[-hx, y, 0.0,  hx,  y, 0.0]);
-            }
-        }
+        let minor = [0.55, 0.55, 0.55];
+		let major = [1.0 , 1.0 , 1.0];
+
+		let hx = self.work_size.x * 0.5;
+		let hy = self.work_size.y * 0.5;
+
+		// vertical (X) lines
+		for i in 0..=(self.work_size.x / 10.0) as i32 {
+			let x    = -hx + i as f32 * 10.0;
+			let col  = if i % 10 == 0 { major } else { minor };
+			self.vertex_storage.extend_from_slice(&[
+				x, -hy, 0.0, col[0], col[1], col[2],
+				x,  hy, 0.0, col[0], col[1], col[2],
+			]);
+		}
+
+		// horizontal (Y) lines
+		for i in 0..=(self.work_size.y / 10.0) as i32 {
+			let y    = -hy + i as f32 * 10.0;
+			let col  = if i % 10 == 0 { major } else { minor };
+			self.vertex_storage.extend_from_slice(&[
+				-hx, y, 0.0, col[0], col[1], col[2],
+				 hx, y, 0.0, col[0], col[1], col[2],
+			]);
+		}
 
         // ── 2) model edges ───────────────────────────────────────────────
         for p in &self.model.polygons {
             for (a, b) in p.edges() {
-                self.vertex_storage.extend_from_slice(&[
-                    a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,
-                    b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,
-                ]);
+                const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
+
+				self.vertex_storage.extend_from_slice(&[
+					a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,  WHITE[0], WHITE[1], WHITE[2],
+					b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,  WHITE[0], WHITE[1], WHITE[2],
+				]);
             }
         }
 
@@ -335,8 +350,16 @@ fn mvp(app: &AluminaApp, rect: egui::Rect) -> Mat4 {
     // ---------------------------------------------------------------
     let aspect = rect.width() / rect.height();
     let proj   = Mat4::perspective_rh_gl(60_f32.to_radians(), aspect, 0.1, 10_000.0);
-    let view   = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
-    let model  = Mat4::from_quat(app.rotation);
+    let view  = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+	// translate screen-space pixels to world units at the grid’s z=0 plane
+	let pixels_per_world = rect.height() / (radius * 2.0);        // ≈ px / mm
+	let pan = Vec3::new(
+		-app.translation.x / pixels_per_world,
+		 app.translation.y / pixels_per_world,
+		0.0,
+	);
+
+	let model = Mat4::from_translation(pan) * Mat4::from_quat(app.rotation);
 
     proj * view * model // one 4 × 4 matrix to project a point all the way to NDC
 }
