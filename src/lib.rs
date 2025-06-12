@@ -176,12 +176,13 @@ impl eframe::App for AluminaApp {
 				ui.separator();
 				ui.label("Snap view");
 				ui.horizontal_wrapped(|ui| {
-					if ui.button("Front").clicked()  { self.rotation = Quat::from_rotation_x(-FRAC_PI_2); }
-					if ui.button("Back").clicked()   { self.rotation = Quat::from_rotation_x(FRAC_PI_2); }
-					if ui.button("Left").clicked()   { self.rotation = Quat::from_rotation_y(FRAC_PI_2); }
-					if ui.button("Right").clicked()  { self.rotation = Quat::from_rotation_y(-FRAC_PI_2); }
-					if ui.button("Top").clicked()    { self.rotation = Quat::IDENTITY; }
-					if ui.button("Bottom").clicked() { self.rotation = Quat::from_rotation_y(PI); }
+					let pitch = Quat::from_rotation_x(-FRAC_PI_2); //  -90° about X  (Z-up ➜ Y-up)
+					if ui.button("Front").clicked() { self.rotation = pitch; } //  -90° about X
+					if ui.button("Back").clicked() { self.rotation = pitch * Quat::from_rotation_z(PI); } // 180° roll
+					if ui.button("Left").clicked() { self.rotation = Quat::from_rotation_y(FRAC_PI_2)  * pitch; } // +90° yaw
+					if ui.button("Right").clicked() { self.rotation = Quat::from_rotation_y(-FRAC_PI_2) * pitch; } // –90° yaw
+					if ui.button("Top").clicked() { self.rotation = Quat::IDENTITY; } // no change
+					if ui.button("Bottom").clicked() { self.rotation = Quat::from_rotation_x(PI); } // look from below
 				});
 
                 ui.separator();
