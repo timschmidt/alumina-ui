@@ -1,8 +1,10 @@
 mod renderer;
 
 use eframe::egui;
-use glam::{Quat, Vec3, Vec4, Mat4};
+use glam::{Quat, Vec3, Mat4};
 use csgrs::csg::CSG;
+use nalgebra::Vector3;
+use geo::LineString;
 use std::f32::consts::{PI, FRAC_PI_2};
 use rfd::AsyncFileDialog;
 use std::{
@@ -33,6 +35,12 @@ pub struct AluminaApp {
     /// CNC working area dimensions (mm)
     work_size: Vec3, // x, y, z
     layer_height: f32,
+	/// Index of the layer currently being inspected (0-based)
+    current_layer: i32,
+    /// `true` while the “tool-path” view is active
+    show_slice: bool,
+    /// The last slice that was generated for `current_layer`
+    sliced_layer: Option<CSG<()>>,
     gpu: Option<Arc<renderer::GpuLines>>,
     vertex_storage: Vec<f32>,
 }
@@ -58,6 +66,9 @@ impl AluminaApp {
             grid: true,
             work_size: Vec3::new(200.0, 200.0, 200.0),
             layer_height: 0.20,
+            current_layer: 0,
+			show_slice:    false,
+			sliced_layer:  None,
             gpu: None,
 			vertex_storage: Vec::new(),
         }
@@ -83,6 +94,15 @@ impl AluminaApp {
             self.applied_offset = self.model_offset;
         }
 	}
+	
+	/// Re-builds `sliced_layer` for the current Z level.
+    fn refresh_slice(&mut self) {
+        if !self.show_slice { return; }
+
+        let z = self.current_layer as f32 * self.layer_height;
+        let plane = csgrs::plane::Plane::from_normal(Vector3::z(), z.into());
+        self.sliced_layer = Some(self.model.slice(plane));
+    }
 }
 
 impl AluminaApp {
@@ -141,17 +161,49 @@ impl AluminaApp {
 			]);
 		}
 
-        // ── 2) model edges ───────────────────────────────────────────────
-        for p in &self.model.polygons {
-            for (a, b) in p.edges() {
-                const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
-
-				self.vertex_storage.extend_from_slice(&[
-					a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,  WHITE[0], WHITE[1], WHITE[2],
-					b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,  WHITE[0], WHITE[1], WHITE[2],
+        // ── 2) model / slice ──────────────────────────────────────────────
+        fn add_line_string(ls: &LineString<f64>, z: f32, col: [f32;3], out: &mut Vec<f32>) {
+			for w in ls.0.windows(2) {
+				let a = w[0]; let b = w[1];
+				out.extend_from_slice(&[
+					a.x as f32, a.y as f32, z,  col[0],col[1],col[2],
+					b.x as f32, b.y as f32, z,  col[0],col[1],col[2],
 				]);
-            }
-        }
+			}
+		}
+        
+		if self.show_slice {
+			const YELLOW: [f32;3] = [1.0, 1.0, 0.0];
+			if let Some(slice) = &self.sliced_layer {
+				let z = self.current_layer as f32 * self.layer_height;
+
+				for geom in &slice.geometry.0 {
+					use geo::{LineString, Polygon, Geometry};
+
+					match geom {
+						Geometry::LineString(ls) => add_line_string(ls, z, YELLOW, &mut self.vertex_storage),
+						Geometry::Polygon(poly) =>  {
+							add_line_string(&poly.exterior(), z, YELLOW, &mut self.vertex_storage);
+							for inner in poly.interiors() {
+								add_line_string(inner, z, YELLOW, &mut self.vertex_storage);
+							}
+						}
+						_ => {} // ignore points etc.
+					}
+				}
+			}
+		} else {
+			for p in &self.model.polygons {
+				for (a, b) in p.edges() {
+					const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
+
+					self.vertex_storage.extend_from_slice(&[
+						a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,  WHITE[0], WHITE[1], WHITE[2],
+						b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,  WHITE[0], WHITE[1], WHITE[2],
+					]);
+				}
+			}
+		}
 
         // Upload (only when we still own the *single* strong ref)
         if let Some(gpu_arc) = &mut self.gpu {
@@ -226,6 +278,7 @@ impl eframe::App for AluminaApp {
                         self.applied_offset = Vec3::splat(f32::NAN);
                         self.model_offset   = Vec3::ZERO;
                         self.refresh_model();
+                        self.refresh_slice();
                     }
 
                     if ui.button("Center").clicked() {
@@ -234,6 +287,7 @@ impl eframe::App for AluminaApp {
                         self.applied_offset = Vec3::splat(f32::NAN);
                         self.model_offset   = Vec3::ZERO;
                         self.refresh_model();
+                        self.refresh_slice();
                     }
 
                     ui.horizontal(|ui| {
@@ -279,8 +333,21 @@ impl eframe::App for AluminaApp {
                             .clamp_range(0.01..=10.0),
                     );
                 });
-                ui.separator();
+                
+                ui.horizontal(|ui|{
+					let max_layers = (self.work_size.z / self.layer_height).floor() as i32;
+					let prev = self.current_layer;
+					ui.label("Current layer:");
+					ui.add(egui::DragValue::new(&mut self.current_layer)
+						   .clamp_range(0..=max_layers)
+						   .speed(1));
+					if self.current_layer != prev { self.refresh_slice(); }
+				});
+				if ui.checkbox(&mut self.show_slice, "slice").changed() {
+					self.refresh_slice();
+				}
 
+                ui.separator();
                 if ui.button("load workpiece").clicked() {
 					spawn_file_picker(
 						Arc::clone(&self.workpiece_data),
@@ -296,10 +363,6 @@ impl eframe::App for AluminaApp {
 						&["stl", "dxf"],
 					);
 				}
-                if ui.button("toolpath").clicked() {
-                    // TODO: implement toolpath action
-                    log::info!("'toolpath' button pressed");
-                }
                 if ui.button("send").clicked() {
                     // TODO: implement send action
                     log::info!("'send' button pressed");
@@ -322,7 +385,8 @@ impl eframe::App for AluminaApp {
                     // ── force a rebuild ─────────────────────────────────────────────
 					self.applied_scale = Vec3::NEG_ONE;          // anything ≠ model_scale works
 					self.applied_offset = Vec3::splat(f32::NAN);
-					self.refresh_model();                 // now `model` is up-to-date
+					self.refresh_model();
+					self.refresh_slice();
                     log::info!("Workpiece geometry loaded ({} bytes)", bytes.len());
                 }
                 None => log::error!("Could not parse workpiece file – unsupported or corrupt"),
@@ -341,7 +405,8 @@ impl eframe::App for AluminaApp {
                     // ── force a rebuild ─────────────────────────────────────────────
 					self.applied_scale = Vec3::NEG_ONE;          // anything ≠ model_scale works
 					self.applied_offset = Vec3::splat(f32::NAN);
-					self.refresh_model();                 // now `model` is up-to-date
+					self.refresh_model();
+					self.refresh_slice();
                     log::info!("Model geometry loaded ({} bytes)", bytes.len());
                 }
                 None => log::error!("Could not parse model file – unsupported or corrupt"),
@@ -350,6 +415,7 @@ impl eframe::App for AluminaApp {
 
         // Apply scaling if the user changed any of the factors -------------
         self.refresh_model();
+        self.refresh_slice();
 
         // ------------------------------------------------------------------
         // Main viewport
