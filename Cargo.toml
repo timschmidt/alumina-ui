@@ -6,7 +6,6 @@ edition = "2024"
 [dependencies]
 eframe = { version = "0.27", default-features = false, features = ["glow"] }
 egui = { version = "0.27" }
-glam = "0.27"
 # The following are only pulled in when compiling for the web target
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
