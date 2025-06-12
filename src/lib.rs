@@ -22,6 +22,10 @@ pub struct AluminaApp {
     model_scale: Vec3,
     /// Last scale that was applied to `model` – lets us avoid needless rebuilds.
     applied_scale: Vec3,
+    /// User-controlled translation (mm)
+    model_offset: Vec3,
+    /// Last translation that was applied to `model`
+    applied_offset: Vec3,
     workpiece_data: Arc<Mutex<Option<Vec<u8>>>>,
     model_data: Arc<Mutex<Option<Vec<u8>>>>,
     wireframe: bool,
@@ -46,6 +50,8 @@ impl AluminaApp {
             model: base_model,
             model_scale,
             applied_scale: model_scale,
+            model_offset: Vec3::ZERO,
+            applied_offset: Vec3::ZERO,
             workpiece_data: Arc::new(Mutex::new(None)),
             model_data: Arc::new(Mutex::new(None)),
             wireframe: true,
@@ -57,16 +63,26 @@ impl AluminaApp {
         }
     }
     
-    /// Re‑creates the renderable `model` if the requested scale has changed.
-    fn refresh_scaled_model(&mut self) {
-        if self.model_scale != self.applied_scale {
+    /// Re‑creates the renderable `model` if the requested scale or translation has changed.
+    fn refresh_model(&mut self) {
+        if self.model_scale != self.applied_scale || self.model_offset != self.applied_offset {
             self.model = self
                 .base_model
                 .clone()
-                .scale(self.model_scale.x.into(), self.model_scale.y.into(), self.model_scale.z.into());
-            self.applied_scale = self.model_scale;
+                .scale(
+                    self.model_scale.x.into(),
+                    self.model_scale.y.into(),
+                    self.model_scale.z.into(),
+                )
+                .translate(
+                    self.model_offset.x.into(),
+                    self.model_offset.y.into(),
+                    self.model_offset.z.into(),
+                );
+            self.applied_scale  = self.model_scale;
+            self.applied_offset = self.model_offset;
         }
-    }
+	}
 }
 
 impl AluminaApp {
@@ -199,6 +215,44 @@ impl eframe::App for AluminaApp {
                     }
                 });
                 
+                // ────────────── Position Controls ──────────────
+                ui.separator();
+                ui.collapsing("Model position", |ui| {
+                    if ui.button("Float (Z = 0)").clicked() {
+                        self.base_model = self.base_model.clone().float();
+                        // force rebuild
+                        self.applied_scale  = Vec3::NEG_ONE;
+                        self.applied_offset = Vec3::splat(f32::NAN);
+                        self.model_offset   = Vec3::ZERO;
+                        self.refresh_model();
+                    }
+
+                    if ui.button("Center").clicked() {
+                        self.base_model = self.base_model.clone().center();
+                        self.applied_scale  = Vec3::NEG_ONE;
+                        self.applied_offset = Vec3::splat(f32::NAN);
+                        self.model_offset   = Vec3::ZERO;
+                        self.refresh_model();
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.label("X:");
+                        ui.add(egui::DragValue::new(&mut self.model_offset.x).speed(1.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Y:");
+                        ui.add(egui::DragValue::new(&mut self.model_offset.y).speed(1.0));
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Z:");
+                        ui.add(egui::DragValue::new(&mut self.model_offset.z).speed(1.0));
+                    });
+
+                    if ui.button("Reset position").clicked() {
+                        self.model_offset = Vec3::ZERO;
+                    }
+                });
+                
                 ui.separator();
                 ui.collapsing("Work area (mm)", |ui| {
                     ui.horizontal(|ui| {
@@ -266,7 +320,8 @@ impl eframe::App for AluminaApp {
                     self.base_model = csg;
                     // ── force a rebuild ─────────────────────────────────────────────
 					self.applied_scale = Vec3::NEG_ONE;          // anything ≠ model_scale works
-					self.refresh_scaled_model();                 // now `model` is up-to-date
+					self.applied_offset = Vec3::splat(f32::NAN);
+					self.refresh_model();                 // now `model` is up-to-date
                     log::info!("Workpiece geometry loaded ({} bytes)", bytes.len());
                 }
                 None => log::error!("Could not parse workpiece file – unsupported or corrupt"),
@@ -284,7 +339,8 @@ impl eframe::App for AluminaApp {
                     self.base_model = csg;
                     // ── force a rebuild ─────────────────────────────────────────────
 					self.applied_scale = Vec3::NEG_ONE;          // anything ≠ model_scale works
-					self.refresh_scaled_model();                 // now `model` is up-to-date
+					self.applied_offset = Vec3::splat(f32::NAN);
+					self.refresh_model();                 // now `model` is up-to-date
                     log::info!("Model geometry loaded ({} bytes)", bytes.len());
                 }
                 None => log::error!("Could not parse model file – unsupported or corrupt"),
@@ -292,7 +348,7 @@ impl eframe::App for AluminaApp {
         }
 
         // Apply scaling if the user changed any of the factors -------------
-        self.refresh_scaled_model();
+        self.refresh_model();
 
         // ------------------------------------------------------------------
         // Main viewport
