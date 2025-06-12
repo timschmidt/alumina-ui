@@ -75,29 +75,53 @@ impl AluminaApp {
         self.vertex_storage.clear();
 
         // ── 1) grid (10 mm spacing, ±work_size/2) ───────────────────────
-        let minor = [0.55, 0.55, 0.55];
-		let major = [1.0 , 1.0 , 1.0];
+        if self.grid {
+			let minor = [0.55, 0.55, 0.55];
+			let major = [1.0 , 1.0 , 1.0];
 
-		let hx = self.work_size.x * 0.5;
-		let hy = self.work_size.y * 0.5;
+			let hx = self.work_size.x * 0.5;
+			let hy = self.work_size.y * 0.5;
+			let hz = self.work_size.z;
 
-		// vertical (X) lines
-		for i in 0..=(self.work_size.x / 10.0) as i32 {
-			let x    = -hx + i as f32 * 10.0;
-			let col  = if i % 10 == 0 { major } else { minor };
+			// vertical (X) lines
+			for i in 0..=(self.work_size.x / 10.0) as i32 {
+				let x    = -hx + i as f32 * 10.0;
+				let col  = if i % 10 == 0 { major } else { minor };
+				self.vertex_storage.extend_from_slice(&[
+					x, -hy, 0.0, col[0], col[1], col[2],
+					x,  hy, 0.0, col[0], col[1], col[2],
+				]);
+			}
+
+			// horizontal (Y) lines
+			for i in 0..=(self.work_size.y / 10.0) as i32 {
+				let y    = -hy + i as f32 * 10.0;
+				let col  = if i % 10 == 0 { major } else { minor };
+				self.vertex_storage.extend_from_slice(&[
+					-hx, y, 0.0, col[0], col[1], col[2],
+					 hx, y, 0.0, col[0], col[1], col[2],
+				]);
+			}
+			
+			// outline the remaining cuboid edges
+			let edge = major;
+
+			//  four vertical edges
+			for (sx, sy) in [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)] {
+				let x = sx * hx;
+				let y = sy * hy;
+				self.vertex_storage.extend_from_slice(&[
+					x, y, 0.0, edge[0], edge[1], edge[2],   // bottom
+					x, y, hz , edge[0], edge[1], edge[2],   // top
+				]);
+			}
+			
+			//  top rectangle (Z = hz)
 			self.vertex_storage.extend_from_slice(&[
-				x, -hy, 0.0, col[0], col[1], col[2],
-				x,  hy, 0.0, col[0], col[1], col[2],
-			]);
-		}
-
-		// horizontal (Y) lines
-		for i in 0..=(self.work_size.y / 10.0) as i32 {
-			let y    = -hy + i as f32 * 10.0;
-			let col  = if i % 10 == 0 { major } else { minor };
-			self.vertex_storage.extend_from_slice(&[
-				-hx, y, 0.0, col[0], col[1], col[2],
-				 hx, y, 0.0, col[0], col[1], col[2],
+				-hx, -hy, hz, edge[0], edge[1], edge[2],    hx, -hy, hz, edge[0], edge[1], edge[2],
+				 hx, -hy, hz, edge[0], edge[1], edge[2],    hx,  hy, hz, edge[0], edge[1], edge[2],
+				 hx,  hy, hz, edge[0], edge[1], edge[2],   -hx,  hy, hz, edge[0], edge[1], edge[2],
+				-hx,  hy, hz, edge[0], edge[1], edge[2],   -hx, -hy, hz, edge[0], edge[1], edge[2],
 			]);
 		}
 
@@ -290,7 +314,7 @@ impl eframe::App for AluminaApp {
                         Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch) * self.rotation;
                 } else if input.pointer.secondary_down() {
                     // right‑drag → pan
-                    self.translation += delta;
+                    self.translation += -delta;
                 }
             }
 
