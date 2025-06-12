@@ -1,4 +1,4 @@
-use glam::Mat4;
+use nalgebra::Matrix4;
 use glow::{Context, HasContext as _};
 
 pub struct GpuLines {
@@ -71,9 +71,9 @@ impl GpuLines {
 		self.vertex_count=(verts.len()/6)as i32;
     }
 
-    pub unsafe fn paint(&self, gl: &Context, mvp: Mat4) {
+    pub unsafe fn paint(&self, gl: &Context, mvp: Matrix4<f32>) {
         gl.use_program(Some(self.program));
-        gl.uniform_matrix_4_f32_slice(Some(&self.u_mvp), false, mvp.to_cols_array().as_slice());
+        gl.uniform_matrix_4_f32_slice(Some(&self.u_mvp), false, mvp.as_slice());
         gl.bind_vertex_array(Some(self.vao));
         gl.draw_arrays(glow::LINES, 0, self.vertex_count);
     }

@@ -1,9 +1,8 @@
 mod renderer;
 
 use eframe::egui;
-use glam::{Quat, Vec3, Mat4};
 use csgrs::csg::CSG;
-use nalgebra::Vector3;
+use nalgebra::{ Vector3, Matrix4, UnitQuaternion, Translation3, Perspective3, Point3 };
 use geo::LineString;
 use std::f32::consts::{PI, FRAC_PI_2};
 use rfd::AsyncFileDialog;
@@ -13,7 +12,7 @@ use std::{
 };
 
 pub struct AluminaApp {
-    rotation: Quat,
+    rotation: UnitQuaternion<f32>,
     translation: egui::Vec2,
     zoom: f32,
     /// Un‑scaled geometry as loaded from disk (or the default icosahedron).
@@ -21,19 +20,19 @@ pub struct AluminaApp {
     /// Geometry that is actually rendered (scaled version of `base_model`).
     model: CSG<()>,
     /// Desired scale factors set by the user (per‑axis, 1 = no change).
-    model_scale: Vec3,
+    model_scale: Vector3<f32>,
     /// Last scale that was applied to `model` – lets us avoid needless rebuilds.
-    applied_scale: Vec3,
+    applied_scale: Vector3<f32>,
     /// User-controlled translation (mm)
-    model_offset: Vec3,
+    model_offset: Vector3<f32>,
     /// Last translation that was applied to `model`
-    applied_offset: Vec3,
+    applied_offset: Vector3<f32>,
     workpiece_data: Arc<Mutex<Option<Vec<u8>>>>,
     model_data: Arc<Mutex<Option<Vec<u8>>>>,
     wireframe: bool,
     grid: bool,
     /// CNC working area dimensions (mm)
-    work_size: Vec3, // x, y, z
+    work_size: Vector3<f32>, // x, y, z
     layer_height: f32,
 	/// Index of the layer currently being inspected (0-based)
     current_layer: i32,
@@ -48,23 +47,23 @@ pub struct AluminaApp {
 impl AluminaApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let base_model = CSG::<()>::icosahedron(100.0, None).float();
-        let model_scale = Vec3::new(1.0, 1.0, 1.0);
+        let model_scale = Vector3::new(1.0, 1.0, 1.0);
 
         Self {
-            rotation: Quat::IDENTITY,
+            rotation: UnitQuaternion::identity(),
             translation: egui::Vec2::ZERO,
             zoom: 1.0,
             base_model: base_model.clone(),
             model: base_model,
             model_scale,
             applied_scale: model_scale,
-            model_offset: Vec3::ZERO,
-            applied_offset: Vec3::ZERO,
+            model_offset: Vector3::zeros(),
+            applied_offset: Vector3::zeros(),
             workpiece_data: Arc::new(Mutex::new(None)),
             model_data: Arc::new(Mutex::new(None)),
             wireframe: true,
             grid: true,
-            work_size: Vec3::new(200.0, 200.0, 200.0),
+            work_size: Vector3::new(200.0, 200.0, 200.0),
             layer_height: 0.20,
             current_layer: 0,
 			show_slice:    false,
@@ -228,13 +227,13 @@ impl eframe::App for AluminaApp {
 				ui.separator();
 				ui.label("Snap view");
 				ui.horizontal_wrapped(|ui| {
-					let pitch = Quat::from_rotation_x(-FRAC_PI_2); //  -90° about X  (Z-up ➜ Y-up)
+					let pitch = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -FRAC_PI_2); //  -90° about X  (Z-up ➜ Y-up)
 					if ui.button("Front").clicked() { self.rotation = pitch; } //  -90° about X
-					if ui.button("Back").clicked() { self.rotation = pitch * Quat::from_rotation_z(PI); } // 180° roll
-					if ui.button("Left").clicked() { self.rotation = Quat::from_rotation_y(FRAC_PI_2)  * pitch; } // +90° yaw
-					if ui.button("Right").clicked() { self.rotation = Quat::from_rotation_y(-FRAC_PI_2) * pitch; } // –90° yaw
-					if ui.button("Top").clicked() { self.rotation = Quat::IDENTITY; } // no change
-					if ui.button("Bottom").clicked() { self.rotation = Quat::from_rotation_x(PI); } // look from below
+					if ui.button("Back").clicked() { self.rotation = pitch * UnitQuaternion::from_axis_angle(&Vector3::z_axis(), PI); } // 180° roll
+					if ui.button("Left").clicked() { self.rotation = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), FRAC_PI_2)  * pitch; } // +90° yaw
+					if ui.button("Right").clicked() { self.rotation = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), -FRAC_PI_2) * pitch; } // –90° yaw
+					if ui.button("Top").clicked() { self.rotation = UnitQuaternion::identity(); } // no change
+					if ui.button("Bottom").clicked() { self.rotation = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), PI); } // look from below
 				});
 
                 ui.separator();
@@ -248,23 +247,23 @@ impl eframe::App for AluminaApp {
                         ui.label("X:");
                         ui.add(egui::DragValue::new(&mut self.model_scale.x)
                             .speed(0.01)
-                            .clamp_range(0.01..=10.0));
+                            .clamp_range(0.01..=100.0));
                     });
                     ui.horizontal(|ui| {
                         ui.label("Y:");
                         ui.add(egui::DragValue::new(&mut self.model_scale.y)
                             .speed(0.01)
-                            .clamp_range(0.01..=10.0));
+                            .clamp_range(0.01..=100.0));
                     });
                     ui.horizontal(|ui| {
                         ui.label("Z:");
                         ui.add(egui::DragValue::new(&mut self.model_scale.z)
                             .speed(0.01)
-                            .clamp_range(0.01..=10.0));
+                            .clamp_range(0.01..=100.0));
                     });
 
                     if ui.button("Reset scale").clicked() {
-                        self.model_scale = Vec3::new(1.0, 1.0, 1.0);
+                        self.model_scale = Vector3::new(1.0, 1.0, 1.0);
                     }
                 });
                 
@@ -274,18 +273,18 @@ impl eframe::App for AluminaApp {
                     if ui.button("Float (Z = 0)").clicked() {
                         self.base_model = self.base_model.clone().float();
                         // force rebuild
-                        self.applied_scale  = Vec3::NEG_ONE;
-                        self.applied_offset = Vec3::splat(f32::NAN);
-                        self.model_offset   = Vec3::ZERO;
+                        self.applied_scale  = Vector3::new(-1.0, -1.0, -1.0);
+                        self.applied_offset = Vector3::repeat(f32::NAN);
+                        self.model_offset   = Vector3::zeros();
                         self.refresh_model();
                         self.refresh_slice();
                     }
 
                     if ui.button("Center").clicked() {
                         self.base_model = self.base_model.clone().center();
-                        self.applied_scale  = Vec3::NEG_ONE;
-                        self.applied_offset = Vec3::splat(f32::NAN);
-                        self.model_offset   = Vec3::ZERO;
+                        self.applied_scale  = Vector3::new(-1.0, -1.0, -1.0);
+                        self.applied_offset = Vector3::repeat(f32::NAN);
+                        self.model_offset   = Vector3::zeros();
                         self.refresh_model();
                         self.refresh_slice();
                     }
@@ -304,7 +303,7 @@ impl eframe::App for AluminaApp {
                     });
 
                     if ui.button("Reset position").clicked() {
-                        self.model_offset = Vec3::ZERO;
+                        self.model_offset = Vector3::zeros();
                     }
                 });
                 
@@ -383,8 +382,8 @@ impl eframe::App for AluminaApp {
                 Some(csg) => {
                     self.base_model = csg;
                     // ── force a rebuild ─────────────────────────────────────────────
-					self.applied_scale = Vec3::NEG_ONE;          // anything ≠ model_scale works
-					self.applied_offset = Vec3::splat(f32::NAN);
+					self.applied_scale = Vector3::new(-1.0, -1.0, -1.0);          // anything ≠ model_scale works
+					self.applied_offset = Vector3::repeat(f32::NAN);
 					self.refresh_model();
 					self.refresh_slice();
                     log::info!("Workpiece geometry loaded ({} bytes)", bytes.len());
@@ -403,8 +402,8 @@ impl eframe::App for AluminaApp {
                 Some(csg) => {
                     self.base_model = csg;
                     // ── force a rebuild ─────────────────────────────────────────────
-					self.applied_scale = Vec3::NEG_ONE;          // anything ≠ model_scale works
-					self.applied_offset = Vec3::splat(f32::NAN);
+					self.applied_scale = Vector3::new(-1.0, -1.0, -1.0);          // anything ≠ model_scale works
+					self.applied_offset = Vector3::repeat(f32::NAN);
 					self.refresh_model();
 					self.refresh_slice();
                     log::info!("Model geometry loaded ({} bytes)", bytes.len());
@@ -434,7 +433,9 @@ impl eframe::App for AluminaApp {
                     let yaw = delta.x * 0.01;
                     let pitch = delta.y * 0.01;
                     self.rotation =
-                        Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch) * self.rotation;
+						UnitQuaternion::from_axis_angle(&Vector3::y_axis(), yaw)
+					  * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), pitch)
+					  * self.rotation;
                 } else if input.pointer.secondary_down() {
                     // right‑drag → pan
                     self.translation += -delta;
@@ -484,31 +485,32 @@ impl eframe::App for AluminaApp {
 ///
 /// * `zoom` is interpreted as a dolly factor: 1 = default distance, 2 = half the distance, etc.
 /// * `bounds` is the half-extent of the work area or of the model, whichever is larger.
-fn mvp(app: &AluminaApp, rect: egui::Rect) -> Mat4 {
-    // ---------------------------------------------------------------
-    // 1. camera placement
-    // ---------------------------------------------------------------
-    let radius = app.work_size.length() * 0.5;           // world units (mm)
-    let base_eye = radius * 3.0;                         // “far enough” for a 60° FOV
-    let eye = Vec3::new(0.0, 0.0, base_eye / app.zoom);  // dolly with the scroll wheel
+fn mvp(app: &AluminaApp, rect: egui::Rect) -> Matrix4<f32> {
+    // ─ 1. camera distance ─
+    let radius   = app.work_size.norm() * 0.5;
+    let base_eye = radius * 3.0;
+    let eye      = Point3::new(0.0, 0.0, base_eye / app.zoom);
 
-    // ---------------------------------------------------------------
-    // 2. matrices
-    // ---------------------------------------------------------------
+    // ─ 2. matrices ─
     let aspect = rect.width() / rect.height();
-    let proj   = Mat4::perspective_rh_gl(60_f32.to_radians(), aspect, 0.1, 10_000.0);
-    let view  = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
-	// translate screen-space pixels to world units at the grid’s z=0 plane
-	let pixels_per_world = rect.height() / (radius * 2.0);        // ≈ px / mm
-	let pan = Vec3::new(
-		-app.translation.x / pixels_per_world,
-		 app.translation.y / pixels_per_world,
-		0.0,
-	);
+    let proj   = Perspective3::new(aspect, 60_f32.to_radians(), 0.1, 10_000.0).to_homogeneous();
+    let view   = nalgebra::Isometry3::look_at_rh(
+                    &eye,
+                    &Point3::origin(),                   // target
+                    &Vector3::new(0.0, 1.0, 0.0),        // up
+                 ).to_homogeneous();
 
-	let model = Mat4::from_translation(pan) * Mat4::from_quat(app.rotation);
+    // screen-pixel panning (same maths as before)
+    let pixels_per_world = rect.height() / (radius * 2.0);
+    let pan = Vector3::new(
+        -app.translation.x / pixels_per_world,
+         app.translation.y / pixels_per_world,
+         0.0,
+    );
+    let model = Translation3::from(pan).to_homogeneous()
+               * app.rotation.to_homogeneous();
 
-    proj * view * model // one 4 × 4 matrix to project a point all the way to NDC
+    proj * view * model
 }
 
 fn spawn_file_picker(
