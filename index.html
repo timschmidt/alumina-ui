@@ -11,53 +11,54 @@
   <body>
     <canvas id="alumina_canvas"></canvas>
     <script type="module">
-      async function importGzJs() {
-        const res = await fetch("./alumina-ui.js.gz");
-        if (!res.ok) throw new Error("cannot fetch gzip JS");
+      /* ── generic loader for a .js.gz file ───────────────────────────── */
+      async function importGzJs(path) {
+        const res = await fetch(path);
+        if (!res.ok) throw new Error(`cannot fetch gzip JS: ${path}`);
 
-        // --- decompress if (and only if) the server has NOT already   --
-        //     done so via `Content-Encoding: gzip`.                     --
-        // ---------------------------------------------------------------
         let jsBytes;
         if (res.headers.get("content-encoding")?.includes("gzip")) {
-          /* already decoded for us */
+          // server already decoded for us
           jsBytes = new Uint8Array(await res.arrayBuffer());
-        } else if (globalThis.DecompressionStream) {          // modern engines
+        } else if (globalThis.DecompressionStream) {
+          // client-side decode
           const ds  = new DecompressionStream("gzip");
           const buf = await new Response(res.body.pipeThrough(ds)).arrayBuffer();
           jsBytes   = new Uint8Array(buf);
-        } else {                                             // tiny poly-fill
-          const { gunzipSync } = await import("./inflate.js");
-          jsBytes = gunzipSync(new Uint8Array(await res.arrayBuffer()));
+        } else {
+          throw new Error("no gzip support in this browser");
         }
 
-        // --- turn decompressed source into a module -------------------
+        /* turn the decompressed source into an ES module */
         const blobURL = URL.createObjectURL(
           new Blob([jsBytes], { type: "text/javascript" }),
         );
         return import(blobURL);
       }
 
+      /* ── main entry point ───────────────────────────────────────────── */
       async function run() {
-        const { default: init, start } = await importGzJs();
+        /* alumina-ui (ESM, always needed) */
+        const { default: init, start } =
+          await importGzJs("./alumina-ui.js.gz");
 
-        // ───── wasm (always .zst) ───────────────────────────────────
-        // zstd.js is UMD → puts `fzstd.decompress` on the global object.
-        const zstdMod = await import("./zstd.js");      // side-effect only
+        /* zstd.js side-effect (now loaded from .gz) */
+        const zstdMod = await importGzJs("./zstd.js.gz");  // side-effect only
         const decompress =
-              zstdMod.decompress                // ← if someone ESM-patched it
-           ?? zstdMod.default?.decompress       // ← roll-up sometimes nests it
-           ?? globalThis.fzstd?.decompress;     // ← canonical UMD path
+              zstdMod.decompress
+           ?? zstdMod.default?.decompress
+           ?? globalThis.fzstd?.decompress;
 
         if (typeof decompress !== "function") {
           throw new Error("zstd.js failed to provide a decompress() function");
         }
 
+        /* fetch & decompress the .wasm.zst payload */
         const zst        = await fetch("./alumina-ui_bg.wasm.zst");
         const compressed = new Uint8Array(await zst.arrayBuffer());
-        const wasmBytes  = decompress(compressed);   // Uint8Array
+        const wasmBytes  = decompress(compressed);
 
-        await init(wasmBytes);                       // hand it straight over
+        await init(wasmBytes);
         start("alumina_canvas");
       }
 

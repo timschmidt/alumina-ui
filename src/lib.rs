@@ -19,7 +19,7 @@ pub struct AluminaApp {
     base_model: CSG<()>,
     /// Geometry that is actually rendered (scaled version of `base_model`).
     model: CSG<()>,
-    /// Desired scale factors set by the user (per‑axis, 1 = no change).
+    /// Desired scale factors set by the user (per‑axis, 1 = no change).
     model_scale: Vector3<f32>,
     /// Last scale that was applied to `model` – lets us avoid needless rebuilds.
     applied_scale: Vector3<f32>,

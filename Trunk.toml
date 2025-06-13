@@ -1,7 +1,7 @@
 [build]
 filehash = false
 
-[tools.wasm-bindgen]               # ▼ run wasm-bindgen with the tiniest output
+[tools.wasm-bindgen]
 args = [
   "--target", "web",
   "--no-typescript",
@@ -11,8 +11,8 @@ args = [
 ]
 
 [[hooks]]
-stage   = "post_build"            # run after Trunk finished writing dist/
-command = "bash"                  # use `cmd /C` or `pwsh` on Windows
+stage   = "post_build"
+command = "bash"
 command_arguments = [
   "-c",
   '''
@@ -26,10 +26,8 @@ wasm-opt -Oz --vacuum --enable-bulk-memory-opt --enable-nontrapping-float-to-int
 wasm-tools strip "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm" \
          -o "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm"
 
-# ──────────────────────────────────────────────────────────────────────
-# 1) Strip Trunk’s auto-bootstrap & preload hints
-#    (anything that still references the *uncompressed* artefacts).
-#    ───────────────────────────────────────────────────────────────────
+# Strip Trunk’s auto-bootstrap & preload hints
+# (anything that still references the *uncompressed* artefacts).
 sed -i \
   -e '/rel="modulepreload".*alumina-ui\.js/d' \
   -e '/rel="preload".*alumina-ui_bg\.wasm/d' \
@@ -37,9 +35,10 @@ sed -i \
   "$TRUNK_STAGING_DIR/index.html"
 
 cp "$TRUNK_SOURCE_DIR/zstd.js" "$TRUNK_STAGING_DIR/zstd.js"
-gzip -kf -9 "$TRUNK_STAGING_DIR/index.html"
-gzip -kf -9 "$TRUNK_STAGING_DIR/alumina-ui.js"
-gzip -kf -9 "$TRUNK_STAGING_DIR/zstd.js"
+cp "$TRUNK_SOURCE_DIR/favicon.gif" "$TRUNK_STAGING_DIR/favicon.ico"
+gzip -fk -9 "$TRUNK_STAGING_DIR/index.html"
+gzip -f -9 "$TRUNK_STAGING_DIR/alumina-ui.js"
+gzip -f -9 "$TRUNK_STAGING_DIR/zstd.js"
 
 if command -v zstd >/dev/null; then
   zstd --ultra -22 -T0 -q -f \
