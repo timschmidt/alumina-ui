@@ -1,6 +1,15 @@
 [build]
 filehash = false
 
+[tools.wasm-bindgen]               # ▼ run wasm-bindgen with the tiniest output
+args = [
+  "--target", "web",
+  "--no-typescript",
+  "--omit-default-module-path",
+  "--remove-name-section",
+  "--remove-producers-section",
+]
+
 [[hooks]]
 stage   = "post_build"            # run after Trunk finished writing dist/
 command = "bash"                  # use `cmd /C` or `pwsh` on Windows
@@ -8,6 +17,14 @@ command_arguments = [
   "-c",
   '''
 set -euo pipefail
+
+# 0) Run Binaryen optimiser (≈-10 – 30 %)
+wasm-opt -Oz --vacuum --enable-bulk-memory-opt --enable-nontrapping-float-to-int -o "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm" \
+         "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm"
+
+# 1) Strip any leftover custom sections
+wasm-tools strip "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm" \
+         -o "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm"
 
 # ──────────────────────────────────────────────────────────────────────
 # 1) Strip Trunk’s auto-bootstrap & preload hints

@@ -1,0 +1,11 @@
+[target.wasm32-unknown-unknown]
+rustflags = [
+  # Tell LLVM we only care about size
+  "-C", "opt-level=z",
+  # Remove *all* symbol / DWARF / producer sections early
+  "-C", "link-arg=--strip-all",
+  # Prevent extra code bloat from panic formatting
+  "-C", "panic=abort",
+  # Disable embedding bit-code (nothing will use it after LTO)
+  #"-C", "embed-bitcode=no",
+]

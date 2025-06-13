@@ -27,7 +27,6 @@ default = [
     "wasm-bindgen-futures",
     "console_error_panic_hook",
     "wasm-logger",
-    "wasm-bindgen",
 ]
 
 [lib]
@@ -35,9 +34,10 @@ crate-type = ["cdylib"]
 
 [profile.release]
 opt-level = "z"
-lto = "thin"
+lto = "fat"
 codegen-units = 1
-strip = "debuginfo"
+strip = "symbols"
 debug-assertions = false
 overflow-checks = false
 panic = "abort"
+incremental = false
