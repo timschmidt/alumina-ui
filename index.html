@@ -11,8 +11,57 @@
   <body>
     <canvas id="alumina_canvas"></canvas>
     <script type="module">
-      import init, { start } from "./alumina_ui.js";
-      init().then(() => start("csgrs_canvas"));
+      async function importGzJs() {
+        const res = await fetch("./alumina-ui.js.gz");
+        if (!res.ok) throw new Error("cannot fetch gzip JS");
+
+        // --- decompress if (and only if) the server has NOT already   --
+        //     done so via `Content-Encoding: gzip`.                     --
+        // ---------------------------------------------------------------
+        let jsBytes;
+        if (res.headers.get("content-encoding")?.includes("gzip")) {
+          /* already decoded for us */
+          jsBytes = new Uint8Array(await res.arrayBuffer());
+        } else if (globalThis.DecompressionStream) {          // modern engines
+          const ds  = new DecompressionStream("gzip");
+          const buf = await new Response(res.body.pipeThrough(ds)).arrayBuffer();
+          jsBytes   = new Uint8Array(buf);
+        } else {                                             // tiny poly-fill
+          const { gunzipSync } = await import("./inflate.js");
+          jsBytes = gunzipSync(new Uint8Array(await res.arrayBuffer()));
+        }
+
+        // --- turn decompressed source into a module -------------------
+        const blobURL = URL.createObjectURL(
+          new Blob([jsBytes], { type: "text/javascript" }),
+        );
+        return import(blobURL);
+      }
+
+      async function run() {
+        const { default: init, start } = await importGzJs();
+
+        // ───── wasm (always .zst) ───────────────────────────────────
+        // zstd.js is UMD → puts `fzstd.decompress` on the global object.
+        const zstdMod = await import("./zstd.js");      // side-effect only
+        const decompress =
+              zstdMod.decompress                // ← if someone ESM-patched it
+           ?? zstdMod.default?.decompress       // ← roll-up sometimes nests it
+           ?? globalThis.fzstd?.decompress;     // ← canonical UMD path
+
+        if (typeof decompress !== "function") {
+          throw new Error("zstd.js failed to provide a decompress() function");
+        }
+
+        const zst        = await fetch("./alumina-ui_bg.wasm.zst");
+        const compressed = new Uint8Array(await zst.arrayBuffer());
+        const wasmBytes  = decompress(compressed);   // Uint8Array
+
+        await init(wasmBytes);                       // hand it straight over
+        start("alumina_canvas");
+      }
+
+      run().catch(console.error);
     </script>
   </body>
 </html>

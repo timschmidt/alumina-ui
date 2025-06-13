@@ -1,2 +1,33 @@
 [build]
 filehash = false
+
+[[hooks]]
+stage   = "post_build"            # run after Trunk finished writing dist/
+command = "bash"                  # use `cmd /C` or `pwsh` on Windows
+command_arguments = [
+  "-c",
+  '''
+set -euo pipefail
+
+# ──────────────────────────────────────────────────────────────────────
+# 1) Strip Trunk’s auto-bootstrap & preload hints
+#    (anything that still references the *uncompressed* artefacts).
+#    ───────────────────────────────────────────────────────────────────
+sed -i \
+  -e '/rel="modulepreload".*alumina-ui\.js/d' \
+  -e '/rel="preload".*alumina-ui_bg\.wasm/d' \
+  -e '/import init.*,.*\/alumina-ui\.js/,/dispatchEvent.*TrunkApplicationStarted/d' \
+  "$TRUNK_STAGING_DIR/index.html"
+
+cp "$TRUNK_SOURCE_DIR/zstd.js" "$TRUNK_STAGING_DIR/zstd.js"
+gzip -kf -9 "$TRUNK_STAGING_DIR/index.html"
+gzip -kf -9 "$TRUNK_STAGING_DIR/alumina-ui.js"
+gzip -kf -9 "$TRUNK_STAGING_DIR/zstd.js"
+
+if command -v zstd >/dev/null; then
+  zstd --ultra -22 -T0 -q -f \
+       "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm" \
+       -o "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm.zst"
+fi
+  '''
+]
