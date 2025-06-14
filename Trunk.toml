@@ -35,7 +35,7 @@ sed -i \
   "$TRUNK_STAGING_DIR/index.html"
 
 cp "$TRUNK_SOURCE_DIR/zstd.js" "$TRUNK_STAGING_DIR/zstd.js"
-cp "$TRUNK_SOURCE_DIR/favicon.gif" "$TRUNK_STAGING_DIR/favicon.ico"
+cp "$TRUNK_SOURCE_DIR/favicon.ico" "$TRUNK_STAGING_DIR/favicon.ico"
 gzip -fk -9 "$TRUNK_STAGING_DIR/index.html"
 gzip -f -9 "$TRUNK_STAGING_DIR/alumina-ui.js"
 gzip -f -9 "$TRUNK_STAGING_DIR/zstd.js"
