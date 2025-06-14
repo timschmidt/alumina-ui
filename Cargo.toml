@@ -20,6 +20,13 @@ bytemuck = "1.23.1"
 egui_glow = "0.27.2"
 nalgebra = "0.33.2"
 geo = "0.29"
+futures = "0.3"                   # one-shot channel for the JS change-event
+js-sys  = "0.3"
+web-sys = { version = "0.3", optional = true, features = [
+    "Window", "Document", "HtmlElement", "HtmlInputElement", "File", "FileList",
+    "Event", "EventTarget", "Blob"
+] }
+once_cell = "1.21.3"
 
 [features]
 default = [
@@ -27,6 +34,7 @@ default = [
     "wasm-bindgen-futures",
     "console_error_panic_hook",
     "wasm-logger",
+    "web-sys",
 ]
 
 [lib]

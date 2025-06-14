@@ -1,5 +1,6 @@
 use nalgebra::Matrix4;
 use glow::{Context, HasContext as _};
+use log::debug;
 
 pub struct GpuLines {
     program: glow::Program,
@@ -69,6 +70,11 @@ impl GpuLines {
         );
         // 6 floats per vertex: xyz rgb
 		self.vertex_count=(verts.len()/6)as i32;
+		debug!(
+            "[alumina] GPU upload: {} vertices ({} floats)",
+            self.vertex_count,
+            verts.len()
+        );
     }
 
     pub unsafe fn paint(&self, gl: &Context, mvp: Matrix4<f32>) {

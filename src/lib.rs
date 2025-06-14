@@ -8,8 +8,27 @@ use std::f32::consts::{PI, FRAC_PI_2};
 use rfd::AsyncFileDialog;
 use std::{
     future::Future,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc, Mutex,
+    },
 };
+use {
+    wasm_bindgen::JsCast,
+    wasm_bindgen_futures::JsFuture,
+    js_sys::Uint8Array,
+    web_sys::{window, HtmlInputElement, Event},
+};
+use std::{rc::Rc, cell::RefCell};
+use once_cell::sync::OnceCell;
+use wasm_bindgen::prelude::*;
+
+// extra logging helpers -------------------------------------------------------
+macro_rules! dbg_log {
+    ($lvl:ident, $($t:tt)*) => {
+        log::$lvl!("[alumina] {}", format!($($t)*));
+    }
+}
 
 pub struct AluminaApp {
     rotation: UnitQuaternion<f32>,
@@ -40,14 +59,20 @@ pub struct AluminaApp {
     show_slice: bool,
     /// The last slice that was generated for `current_layer`
     sliced_layer: Option<CSG<()>>,
-    gpu: Option<Arc<renderer::GpuLines>>,
+    gpu: Option<Arc<Mutex<renderer::GpuLines>>>,
     vertex_storage: Vec<f32>,
+    debug_id: u32,
 }
 
 impl AluminaApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         let base_model = CSG::<()>::icosahedron(100.0, None).float();
         let model_scale = Vector3::new(1.0, 1.0, 1.0);
+        
+        // ----- assign a unique id ------------------------------------------------
+        static INSTANCE_SEQ: AtomicU32 = AtomicU32::new(0);
+        let id = INSTANCE_SEQ.fetch_add(1, Ordering::SeqCst);
+        log::info!("[alumina] AluminaApp#{} constructed", id);
 
         Self {
             rotation: UnitQuaternion::identity(),
@@ -70,6 +95,7 @@ impl AluminaApp {
 			sliced_layer:  None,
             gpu: None,
 			vertex_storage: Vec::new(),
+			debug_id: id,
         }
     }
     
@@ -91,6 +117,13 @@ impl AluminaApp {
                 );
             self.applied_scale  = self.model_scale;
             self.applied_offset = self.model_offset;
+            dbg_log!(
+                debug,
+                "refresh_model → {} polygons (scale={:?} offset={:?})",
+                self.model.polygons.len(),
+                self.model_scale,
+                self.model_offset
+            );
         }
 	}
 	
@@ -205,16 +238,26 @@ impl AluminaApp {
 		}
 
         // Upload (only when we still own the *single* strong ref)
-        if let Some(gpu_arc) = &mut self.gpu {
-            if let Some(gpu) = Arc::get_mut(gpu_arc) {
+        if let Some(gpu_arc) = &self.gpu {
+            if let Ok(mut gpu) = gpu_arc.lock() {
                 gpu.upload_vertices(gl, &self.vertex_storage);
             }
         }
+        dbg_log!(
+            debug,
+            "app#{} sync_buffers: floats={}, verts={}, model_polygons={}, show_slice={}",
+            self.debug_id,
+            self.vertex_storage.len(),
+            self.vertex_storage.len() / 6,
+            self.model.polygons.len(),
+            self.show_slice
+        );
     }
 }
 
 impl eframe::App for AluminaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+		log::trace!("[alumina] -------- frame for app#{} --------", self.debug_id);
         // ------------------------------------------------------------------
         // Sidebar
         // ------------------------------------------------------------------
@@ -386,7 +429,12 @@ impl eframe::App for AluminaApp {
 					self.applied_offset = Vector3::repeat(f32::NAN);
 					self.refresh_model();
 					self.refresh_slice();
-                    log::info!("Workpiece geometry loaded ({} bytes)", bytes.len());
+                    log::info!(
+						"[alumina] app#{}   workpiece loaded → {} bytes, poly={}",
+						self.debug_id,
+						bytes.len(),
+						self.base_model.polygons.len()
+					);
                 }
                 None => log::error!("Could not parse workpiece file – unsupported or corrupt"),
             }
@@ -406,7 +454,12 @@ impl eframe::App for AluminaApp {
 					self.applied_offset = Vector3::repeat(f32::NAN);
 					self.refresh_model();
 					self.refresh_slice();
-                    log::info!("Model geometry loaded ({} bytes)", bytes.len());
+                    log::info!(
+						"[alumina] app#{}   model loaded → {} bytes, poly={}",
+						self.debug_id,
+						bytes.len(),
+						self.base_model.polygons.len()
+					);
                 }
                 None => log::error!("Could not parse model file – unsupported or corrupt"),
             }
@@ -454,7 +507,8 @@ impl eframe::App for AluminaApp {
 			if let Some(gl) = _frame.gl() {
 				// ── 1) create once ─────────────────────────────────────────────
                 if self.gpu.is_none() {
-                    self.gpu = Some(Arc::new(unsafe { renderer::GpuLines::new(gl) }));
+                    self.gpu =
+                        Some(Arc::new(Mutex::new(unsafe { renderer::GpuLines::new(gl) })));
                 }
 
                 // ── 2) keep vertex buffer in sync ─────────────────────────────
@@ -462,13 +516,13 @@ impl eframe::App for AluminaApp {
 
                 // ── 3) schedule GL paint right after egui’s own meshes ────────
                 if let Some(gpu_arc) = &self.gpu {
-                    let gpu_for_cb = gpu_arc.clone(); // Arc<T> is Send + Sync
+                    let gpu_for_cb = gpu_arc.clone(); // Arc<Mutex<_>>
                     let mvp = mvp(self, rect);        // copy for the closure
 
                     let callback = egui_glow::CallbackFn::new(move |_info, painter| {
-						unsafe {
-							gpu_for_cb.paint(painter.gl(), mvp);
-						}
+						if let Ok(gpu) = gpu_for_cb.lock() {
+                            unsafe { gpu.paint(painter.gl(), mvp) };
+                        }
                     });
 
                     ui.painter().add(egui::PaintCallback {
@@ -515,18 +569,63 @@ fn mvp(app: &AluminaApp, rect: egui::Rect) -> Matrix4<f32> {
 
 fn spawn_file_picker(
     target: Arc<Mutex<Option<Vec<u8>>>>,
-    filter_name: &'static str,
-    exts: &'static [&'static str],   // ← now the slice is 'static too
+    _filter_name: &'static str,
+    exts: &'static [&'static str],
 ) {
+    // 100 % non-blocking: the async task lives in the browser’s micro-task queue
     execute(async move {
-        if let Some(handle) = AsyncFileDialog::new()
-            .add_filter(filter_name, exts)
-            .pick_file()
-            .await
-        {
-            let bytes = handle.read().await;
-            *target.lock().unwrap() = Some(bytes);
-        }
+        // ---1) build an <input type="file"> on the fly --------------------
+        let document   = window().expect("no window").document().expect("no document");
+        let input: HtmlInputElement = document
+            .create_element("input").unwrap()
+            .dyn_into().unwrap();
+        input.set_type("file");
+
+        // Accept filter (".stl,.dxf", etc.)
+        let accept = exts.iter().map(|e| format!(".{e}")).collect::<Vec<_>>().join(",");
+        input.set_accept(&accept);
+
+        input.style().set_property("display", "none").unwrap();   // invisible
+        document.body().unwrap().append_child(&input).unwrap();
+
+        // ---2) turn the "change" event into a Future -----------------------
+        use futures::channel::oneshot;
+        let (tx, rx)   = oneshot::channel::<()>();
+
+        // Wrap the Sender so we can *move* it exactly once inside an FnMut closure
+        let tx_cell    = Rc::new(RefCell::new(Some(tx)));
+        let tx_handle  = Rc::clone(&tx_cell);
+
+        let closure = Closure::<dyn FnMut(Event)>::wrap(Box::new(move |_e| {
+            if let Some(sender) = tx_handle.borrow_mut().take() {
+                let _ = sender.send(());   // 2nd call → already None → no-op
+            }
+        }));
+        input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref()).unwrap();
+        closure.forget();                 // leak => stays alive for the element’s lifetime
+
+        input.click();                    // **opens** the browser dialog
+        rx.await.ok();                    // wait until the user picked a file
+
+        // ---3) extract bytes with File::arrayBuffer -----------------------
+        let files = input.files().unwrap();
+        if files.length() == 0 { return; }
+        let file  = files.get(0).unwrap();
+
+        let buf_promise = file.array_buffer();
+        let js_buf      = JsFuture::from(buf_promise).await.unwrap();
+        let u8_array    = Uint8Array::new(&js_buf);
+        let mut bytes   = vec![0u8; u8_array.length() as usize];
+        u8_array.copy_to(&mut bytes);
+        dbg_log!(
+            info,
+            "File-picker finished: {} bytes (ext={})",
+            bytes.len(),
+            file.name()
+        );
+
+        *target.lock().unwrap() = Some(bytes);    // hand off to the egui thread
+        // No repaint-call needed – eframe’s RAF loop polls `update` each frame
     });
 }
 
@@ -543,13 +642,18 @@ fn load_csg_from_bytes(bytes: &[u8]) -> Option<CSG<()>> {
     None
 }
 
-// ── Web entry‑point ──
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
+/// Ensures we only create **one** `AluminaApp` per page, even if the module is
+/// re-loaded by Trunk’s hot-reload mechanism.
+static STARTED: OnceCell<()> = OnceCell::new();
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
+    // bail out if we’ve already started once
+    if STARTED.set(()).is_err() {
+        log::warn!("[alumina] second call to `start()` ignored");
+        return Ok(());
+    }
     // Redirect `log` macros & panic messages to the browser console
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
     console_error_panic_hook::set_once();
