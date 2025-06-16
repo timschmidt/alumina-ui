@@ -1,34 +1,30 @@
+#![warn(clippy::pedantic)]
 mod renderer;
 
 use eframe::egui;
 use csgrs::csg::CSG;
 use nalgebra::{ Vector3, Matrix4, UnitQuaternion, Translation3, Perspective3, Point3 };
-use geo::LineString;
-use std::f32::consts::{PI, FRAC_PI_2};
-use rfd::AsyncFileDialog;
+use geo::{LineString, Polygon, Geometry};
 use std::{
+	f32::consts::{PI, FRAC_PI_2},
     future::Future,
+    rc::Rc,
+	cell::RefCell,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc, Mutex,
     },
 };
-use {
-    wasm_bindgen::JsCast,
-    wasm_bindgen_futures::JsFuture,
-    js_sys::Uint8Array,
-    web_sys::{window, HtmlInputElement, Event},
-};
-use std::{rc::Rc, cell::RefCell};
+use wasm_bindgen::{ JsCast, prelude::*, };
+use wasm_bindgen_futures::JsFuture;
+use js_sys::Uint8Array;
+use web_sys::{window, HtmlInputElement, Event};
 use once_cell::sync::OnceCell;
-use wasm_bindgen::prelude::*;
+use futures::channel::oneshot;
+use log::Level;
+use log::info;
 
-// extra logging helpers -------------------------------------------------------
-macro_rules! dbg_log {
-    ($lvl:ident, $($t:tt)*) => {
-        log::$lvl!("[alumina] {}", format!($($t)*));
-    }
-}
+const INVALID_SCALE: Vector3<f32> = Vector3::new(-1.0, -1.0, -1.0);
 
 pub struct AluminaApp {
     rotation: UnitQuaternion<f32>,
@@ -72,7 +68,6 @@ impl AluminaApp {
         // ----- assign a unique id ------------------------------------------------
         static INSTANCE_SEQ: AtomicU32 = AtomicU32::new(0);
         let id = INSTANCE_SEQ.fetch_add(1, Ordering::SeqCst);
-        log::info!("[alumina] AluminaApp#{} constructed", id);
 
         Self {
             rotation: UnitQuaternion::identity(),
@@ -117,13 +112,6 @@ impl AluminaApp {
                 );
             self.applied_scale  = self.model_scale;
             self.applied_offset = self.model_offset;
-            dbg_log!(
-                debug,
-                "refresh_model → {} polygons (scale={:?} offset={:?})",
-                self.model.polygons.len(),
-                self.model_scale,
-                self.model_offset
-            );
         }
 	}
 	
@@ -134,6 +122,20 @@ impl AluminaApp {
         let z = self.current_layer as f32 * self.layer_height;
         let plane = csgrs::plane::Plane::from_normal(Vector3::z(), z.into());
         self.sliced_layer = Some(self.model.slice(plane));
+    }
+    
+    /// Marks `model` as dirty so that next frame will rebuild
+    fn invalidate_model(&mut self) {
+        self.applied_scale  = INVALID_SCALE;
+        self.applied_offset = Vector3::repeat(f32::NAN);
+    }
+
+    /// Hard-reset base_model *and* force a rebuild/slice
+    fn set_base_model(&mut self, csg: CSG<()>) {
+        self.base_model = csg;
+        self.invalidate_model();
+        self.refresh_model();
+        self.refresh_slice();
     }
 }
 
@@ -210,8 +212,6 @@ impl AluminaApp {
 				let z = self.current_layer as f32 * self.layer_height;
 
 				for geom in &slice.geometry.0 {
-					use geo::{LineString, Polygon, Geometry};
-
 					match geom {
 						Geometry::LineString(ls) => add_line_string(ls, z, YELLOW, &mut self.vertex_storage),
 						Geometry::Polygon(poly) =>  {
@@ -243,21 +243,11 @@ impl AluminaApp {
                 gpu.upload_vertices(gl, &self.vertex_storage);
             }
         }
-        dbg_log!(
-            debug,
-            "app#{} sync_buffers: floats={}, verts={}, model_polygons={}, show_slice={}",
-            self.debug_id,
-            self.vertex_storage.len(),
-            self.vertex_storage.len() / 6,
-            self.model.polygons.len(),
-            self.show_slice
-        );
     }
 }
 
 impl eframe::App for AluminaApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-		log::trace!("[alumina] -------- frame for app#{} --------", self.debug_id);
         // ------------------------------------------------------------------
         // Sidebar
         // ------------------------------------------------------------------
@@ -314,22 +304,13 @@ impl eframe::App for AluminaApp {
                 ui.separator();
                 ui.collapsing("Model position", |ui| {
                     if ui.button("Float (Z = 0)").clicked() {
-                        self.base_model = self.base_model.clone().float();
-                        // force rebuild
-                        self.applied_scale  = Vector3::new(-1.0, -1.0, -1.0);
-                        self.applied_offset = Vector3::repeat(f32::NAN);
                         self.model_offset   = Vector3::zeros();
-                        self.refresh_model();
-                        self.refresh_slice();
+                        self.set_base_model(self.base_model.clone().float());
                     }
 
                     if ui.button("Center").clicked() {
-                        self.base_model = self.base_model.clone().center();
-                        self.applied_scale  = Vector3::new(-1.0, -1.0, -1.0);
-                        self.applied_offset = Vector3::repeat(f32::NAN);
                         self.model_offset   = Vector3::zeros();
-                        self.refresh_model();
-                        self.refresh_slice();
+                        self.set_base_model(self.base_model.clone().center());
                     }
 
                     ui.horizontal(|ui| {
@@ -423,12 +404,7 @@ impl eframe::App for AluminaApp {
         if let Some(bytes) = workpiece_bytes_opt {
             match load_csg_from_bytes(&bytes) {
                 Some(csg) => {
-                    self.base_model = csg;
-                    // ── force a rebuild ─────────────────────────────────────────────
-					self.applied_scale = Vector3::new(-1.0, -1.0, -1.0);          // anything ≠ model_scale works
-					self.applied_offset = Vector3::repeat(f32::NAN);
-					self.refresh_model();
-					self.refresh_slice();
+					self.set_base_model(csg.float());
                     log::info!(
 						"[alumina] app#{}   workpiece loaded → {} bytes, poly={}",
 						self.debug_id,
@@ -448,12 +424,7 @@ impl eframe::App for AluminaApp {
         if let Some(bytes) = model_bytes_opt {
             match load_csg_from_bytes(&bytes) {
                 Some(csg) => {
-                    self.base_model = csg;
-                    // ── force a rebuild ─────────────────────────────────────────────
-					self.applied_scale = Vector3::new(-1.0, -1.0, -1.0);          // anything ≠ model_scale works
-					self.applied_offset = Vector3::repeat(f32::NAN);
-					self.refresh_model();
-					self.refresh_slice();
+                    self.set_base_model(csg.float());
                     log::info!(
 						"[alumina] app#{}   model loaded → {} bytes, poly={}",
 						self.debug_id,
@@ -589,7 +560,6 @@ fn spawn_file_picker(
         document.body().unwrap().append_child(&input).unwrap();
 
         // ---2) turn the "change" event into a Future -----------------------
-        use futures::channel::oneshot;
         let (tx, rx)   = oneshot::channel::<()>();
 
         // Wrap the Sender so we can *move* it exactly once inside an FnMut closure
@@ -617,15 +587,8 @@ fn spawn_file_picker(
         let u8_array    = Uint8Array::new(&js_buf);
         let mut bytes   = vec![0u8; u8_array.length() as usize];
         u8_array.copy_to(&mut bytes);
-        dbg_log!(
-            info,
-            "File-picker finished: {} bytes (ext={})",
-            bytes.len(),
-            file.name()
-        );
 
         *target.lock().unwrap() = Some(bytes);    // hand off to the egui thread
-        // No repaint-call needed – eframe’s RAF loop polls `update` each frame
     });
 }
 
@@ -646,7 +609,6 @@ fn load_csg_from_bytes(bytes: &[u8]) -> Option<CSG<()>> {
 /// re-loaded by Trunk’s hot-reload mechanism.
 static STARTED: OnceCell<()> = OnceCell::new();
 
-#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
     // bail out if we’ve already started once
@@ -657,6 +619,7 @@ pub async fn start() -> Result<(), JsValue> {
     // Redirect `log` macros & panic messages to the browser console
     eframe::WebLogger::init(log::LevelFilter::Debug).ok();
     console_error_panic_hook::set_once();
+    let _ = console_log::init_with_level(Level::Debug);
 
     let web_options = eframe::WebOptions::default();
 
@@ -672,23 +635,6 @@ pub async fn start() -> Result<(), JsValue> {
     Ok(())
 }
 
-// ── Native entry‑point ──
-#[cfg(not(target_arch = "wasm32"))]
-fn main() -> eframe::Result<()> {
-    let options = eframe::NativeOptions::default();
-    eframe::run_native(
-        "Alumina",
-        options,
-        Box::new(|cc| Box::new(AluminaApp::new(cc))),
-    )
-}
-
-// Executes an async future without blocking the egui thread
-#[cfg(not(target_arch = "wasm32"))]
-fn execute<F: Future<Output = ()> + Send + 'static>(f: F) {
-    std::thread::spawn(move || futures::executor::block_on(f));
-}
-#[cfg(target_arch = "wasm32")]
 fn execute<F: Future<Output = ()> + 'static>(f: F) {
     wasm_bindgen_futures::spawn_local(f);
 }

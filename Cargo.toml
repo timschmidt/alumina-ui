@@ -11,9 +11,7 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 wasm-logger = { version = "0.2", optional = true }
-log = "0.4"
 csgrs = { version = "0.18.0", default-features = false, features = ["delaunay", "f64", "stl-io", "dxf-io", "hashmap"] }
-rfd = "^0.11.4"
 uuid = { version = "1.17", features = ["js", "v4"] }
 glow = "0.13.1"
 bytemuck = "1.23.1"
@@ -24,9 +22,11 @@ futures = "0.3"                   # one-shot channel for the JS change-event
 js-sys  = "0.3"
 web-sys = { version = "0.3", optional = true, features = [
     "Window", "Document", "HtmlElement", "HtmlInputElement", "File", "FileList",
-    "Event", "EventTarget", "Blob"
+    "Event", "EventTarget", "Blob",
 ] }
 once_cell = "1.21.3"
+console_log = "1.0.0"
+log = "0.4.27"
 
 [features]
 default = [
