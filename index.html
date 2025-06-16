@@ -36,28 +36,38 @@
         return import(blobURL);
       }
 
-      /* ── main entry point ───────────────────────────────────────────── */
+	  /* ── helper for Brotli-compressed WASM ────────────────────────── */
+	  async function fetchBrWasm(path) {
+	    const res = await fetch(path);
+	    if (!res.ok) throw new Error(`cannot fetch Brotli WASM: ${path}`);
+
+	    /* server already decoded? */
+	    if (res.headers.get("content-encoding")?.includes("br")) {
+		  return new Uint8Array(await res.arrayBuffer());
+	    }
+
+	    /* client-side decode via DecompressionStream("brotli") */
+	    if (globalThis.DecompressionStream) {
+		  try {
+		    const ds  = new DecompressionStream("brotli");
+		    const buf = await new Response(res.body.pipeThrough(ds)).arrayBuffer();
+		    return new Uint8Array(buf);
+		  } catch (_) {/* fallthrough */ }
+	    }
+
+	    throw new Error("no Brotli support (server or browser)");
+	  }
+
+	  /* ── main entry point ──────────────────────────────────────────── */
       async function run() {
-        /* alumina-ui (ESM, always needed) */
+        /* 1) grab the JS glue code (gzipped) */
         const { default: init, start } =
           await importGzJs("./alumina-ui.js.gz");
 
-        /* zstd.js side-effect (now loaded from .gz) */
-        const zstdMod = await importGzJs("./zstd.js.gz");  // side-effect only
-        const decompress =
-              zstdMod.decompress
-           ?? zstdMod.default?.decompress
-           ?? globalThis.fzstd?.decompress;
+        /* 2) fetch & decode the Brotli-compressed WASM */
+        const wasmBytes = await fetchBrWasm("./alumina-ui_bg.wasm.br");
 
-        if (typeof decompress !== "function") {
-          throw new Error("zstd.js failed to provide a decompress() function");
-        }
-
-        /* fetch & decompress the .wasm.zst payload */
-        const zst        = await fetch("./alumina-ui_bg.wasm.zst");
-        const compressed = new Uint8Array(await zst.arrayBuffer());
-        const wasmBytes  = decompress(compressed);
-
+        /* 3) hand the bytes to wasm-bindgen’s init(), then start the app */
         await init(wasmBytes);
         start("alumina_canvas");
       }
