@@ -1,16 +1,17 @@
-# alumina ui
+# Alumina UI
 
 ![Screenshot](doc/screenshot.png)
 
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/9WkD3WFxMC)
 
-## set up toolchain
+## Development
+### set up toolchain
 ```shell
-cargo install trunk
+cargo install trunk wasm-opt wasm-tools
 ```
 
-## run
+### run locally
 ```shell
 trunk serve --open --release
 ```
