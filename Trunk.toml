@@ -26,17 +26,9 @@ wasm-opt -Oz --vacuum --strip-debug --enable-bulk-memory-opt --enable-nontrappin
 wasm-tools strip "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm" \
          -o "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm"
 
-# Strip Trunk’s auto-bootstrap & preload hints
-# (anything that still references the *uncompressed* artefacts).
-sed -i \
-  -e '/rel="modulepreload".*alumina-ui\.js/d' \
-  -e '/rel="preload".*alumina-ui_bg\.wasm/d' \
-  -e '/import init.*,.*\/alumina-ui\.js/,/dispatchEvent.*TrunkApplicationStarted/d' \
-  "$TRUNK_STAGING_DIR/index.html"
-
 cp "$TRUNK_SOURCE_DIR/favicon.ico" "$TRUNK_STAGING_DIR/favicon.ico"
 gzip -fk -9 "$TRUNK_STAGING_DIR/index.html"
-gzip -f -9 "$TRUNK_STAGING_DIR/alumina-ui.js"
+gzip -fk -9 "$TRUNK_STAGING_DIR/alumina-ui.js"
 
 if command -v brotli >/dev/null; then
   brotli -q 11 -f \
