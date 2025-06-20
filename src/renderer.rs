@@ -1,13 +1,13 @@
-use nalgebra::Matrix4;
 use glow::{Context, HasContext as _};
+use nalgebra::Matrix4;
 use web_sys::console;
 
 pub struct GpuLines {
     program: glow::Program,
-    vao:     glow::VertexArray,
-    vbo:     glow::Buffer,
+    vao: glow::VertexArray,
+    vbo: glow::Buffer,
     vertex_count: i32,
-    u_mvp:   glow::UniformLocation,
+    u_mvp: glow::UniformLocation,
 }
 
 unsafe impl Send for GpuLines {}
@@ -17,7 +17,9 @@ impl GpuLines {
     pub unsafe fn new(gl: &Context) -> Self {
         let program = {
             let vs = gl.create_shader(glow::VERTEX_SHADER).unwrap();
-            gl.shader_source(vs, r#"#version 300 es
+            gl.shader_source(
+                vs,
+                r#"#version 300 es
                 precision highp float;
                 uniform mat4 u_mvp;
                 layout(location = 0) in vec3 a_pos;
@@ -26,15 +28,19 @@ impl GpuLines {
                 void main() {
 					v_col      = a_col;
 					gl_Position = u_mvp * vec4(a_pos, 1.0);
-				}"#);
+				}"#,
+            );
             gl.compile_shader(vs);
 
             let fs = gl.create_shader(glow::FRAGMENT_SHADER).unwrap();
-            gl.shader_source(fs, r#"#version 300 es
+            gl.shader_source(
+                fs,
+                r#"#version 300 es
                 precision mediump float;
 				in  vec3 v_col;
 				out vec4 o_col;
-				void main() { o_col = vec4(v_col, 1.0); }"#);
+				void main() { o_col = vec4(v_col, 1.0); }"#,
+            );
             gl.compile_shader(fs);
 
             let prog = gl.create_program().unwrap();
@@ -52,13 +58,19 @@ impl GpuLines {
         gl.bind_vertex_array(Some(vao));
         gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
         gl.enable_vertex_attrib_array(0);
-        gl.vertex_attrib_pointer_f32(0,3,glow::FLOAT,false,24,0);
-		gl.enable_vertex_attrib_array(1);
-		gl.vertex_attrib_pointer_f32(1,3,glow::FLOAT,false,24,12);
+        gl.vertex_attrib_pointer_f32(0, 3, glow::FLOAT, false, 24, 0);
+        gl.enable_vertex_attrib_array(1);
+        gl.vertex_attrib_pointer_f32(1, 3, glow::FLOAT, false, 24, 12);
 
         let u_mvp = gl.get_uniform_location(program, "u_mvp").unwrap();
 
-        Self { program, vao, vbo, vertex_count: 0, u_mvp }
+        Self {
+            program,
+            vao,
+            vbo,
+            vertex_count: 0,
+            u_mvp,
+        }
     }
 
     pub unsafe fn upload_vertices(&mut self, gl: &Context, verts: &[f32]) {
@@ -69,8 +81,8 @@ impl GpuLines {
             glow::STATIC_DRAW,
         );
         // 6 floats per vertex: xyz rgb
-		self.vertex_count=(verts.len()/6)as i32;
-		log::info!(
+        self.vertex_count = (verts.len() / 6) as i32;
+        log::info!(
             "[alumina] GPU upload: {} vertices ({} floats)",
             self.vertex_count,
             verts.len()
