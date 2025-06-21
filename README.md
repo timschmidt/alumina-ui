@@ -25,5 +25,5 @@ trunk serve --open --release
 - send toolpaths to firmware
 - implement SD card support
 - create tab for oscope
-- create tab for [node graph](https://github.com/philpax/egui_node_graph2)
+- create tab for [egui_node_graph2](https://github.com/philpax/egui_node_graph2)
 - update to eframe v0.29
