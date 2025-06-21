@@ -24,6 +24,6 @@ trunk serve --open --release
 - generate toolpaths from slices
 - send toolpaths to firmware
 - implement SD card support
-- create tab for oscope
-- create tab for [egui_node_graph2](https://github.com/philpax/egui_node_graph2)
+- create oscope 2D plot on Diagnostic tab
 - update to eframe v0.29
+- integrate [egui_node_graph2](https://github.com/philpax/egui_node_graph2) with Design tab
