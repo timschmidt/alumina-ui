@@ -4,10 +4,9 @@ mod renderer;
 use csgrs::csg::CSG;
 use eframe::egui;
 use futures::channel::oneshot;
-use geo::{Geometry, LineString, Polygon};
+use geo::{Geometry, LineString};
 use js_sys::Uint8Array;
 use log::Level;
-use log::info;
 use nalgebra::{Matrix4, Perspective3, Point3, Translation3, UnitQuaternion, Vector3};
 use once_cell::sync::OnceCell;
 use std::{
@@ -23,6 +22,7 @@ use std::{
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Event, HtmlInputElement, window};
+use glow::{Context, HasContext as _};
 
 const INVALID_SCALE: Vector3<f32> = Vector3::new(-1.0, -1.0, -1.0);
 
@@ -52,7 +52,11 @@ pub struct AluminaApp {
     workpiece_data: Arc<Mutex<Option<Vec<u8>>>>,
     model_data: Arc<Mutex<Option<Vec<u8>>>>,
     wireframe: bool,
-    grid: bool,
+    edges: bool,
+    faces: bool,
+    normals: bool,
+    vertices: bool,
+    workarea: bool,
     /// CNC working area dimensions (mm)
     work_size: Vector3<f32>, // x, y, z
     layer_height: f32,
@@ -63,6 +67,7 @@ pub struct AluminaApp {
     /// The last slice that was generated for `current_layer`
     sliced_layer: Option<CSG<()>>,
     gpu: Option<Arc<Mutex<renderer::GpuLines>>>,
+    gpu_faces:Option<Arc<Mutex<renderer::GpuLines>>>,
     vertex_storage: Vec<f32>,
     debug_id: u32,
     selected_tab: Tab,
@@ -104,13 +109,18 @@ impl AluminaApp {
             workpiece_data: Arc::new(Mutex::new(None)),
             model_data: Arc::new(Mutex::new(None)),
             wireframe: true,
-            grid: true,
+			edges: true,
+			faces: true,
+			normals: true,
+			vertices: true,
+			workarea: true,
             work_size: Vector3::new(200.0, 200.0, 200.0),
             layer_height: 0.20,
             current_layer: 0,
             show_slice: false,
             sliced_layer: None,
             gpu: None,
+            gpu_faces:None,
             vertex_storage: Vec::new(),
             debug_id: id,
             selected_tab: Tab::Control,
@@ -170,9 +180,10 @@ impl AluminaApp {
     /// (Re-)builds the VBO if the model, grid or scale changed.
     unsafe fn sync_buffers(&mut self, gl: &glow::Context) {
         self.vertex_storage.clear();
+        let mut faces: Vec<f32> = Vec::new();
 
         // ── 1) grid (10 mm spacing, ±work_size/2) ───────────────────────
-        if self.grid {
+        if self.workarea {
             let minor = [0.55, 0.55, 0.55];
             let major = [1.0, 1.0, 1.0];
 
@@ -253,34 +264,61 @@ impl AluminaApp {
                 }
             }
         } else {
-            for p in &self.model.polygons {
-                for (a, b) in p.edges() {
-                    const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
+			/* ---------- model wire-frame (edges) ----------------------------- */
+			if self.edges {
+				const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
+				for p in &self.model.polygons {
+					for (a, b) in p.edges() {
+						self.vertex_storage.extend_from_slice(&[
+							a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,
+							WHITE[0], WHITE[1], WHITE[2],
+							b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,
+							WHITE[0], WHITE[1], WHITE[2],
+						]);
+					}
+				}
+			}
 
-                    self.vertex_storage.extend_from_slice(&[
-                        a.pos.x as f32,
-                        a.pos.y as f32,
-                        a.pos.z as f32,
-                        WHITE[0],
-                        WHITE[1],
-                        WHITE[2],
-                        b.pos.x as f32,
-                        b.pos.y as f32,
-                        b.pos.z as f32,
-                        WHITE[0],
-                        WHITE[1],
-                        WHITE[2],
-                    ]);
-                }
-            }
-        }
+			/* ---------- model faces (solid) ---------------------------------- */
+			if self.faces {
+				for p in &self.model.polygons {
+					let verts = &p.vertices;
+					if verts.len() >= 3 {
+						for i in 1..verts.len() - 1 {
+							for v in [&verts[0].pos, &verts[i].pos, &verts[i + 1].pos] {
+								faces.extend_from_slice(&[
+									v.x as f32,
+									v.y as f32,
+									v.z as f32,
+									renderer::EGUI_BLUE[0],
+									renderer::EGUI_BLUE[1],
+									renderer::EGUI_BLUE[2],
+								]);
+							}
+						}
+					}
+				}
+			}
+		}
 
-        // Upload (only when we still own the *single* strong ref)
-        if let Some(gpu_arc) = &self.gpu {
-            if let Ok(mut gpu) = gpu_arc.lock() {
-                gpu.upload_vertices(gl, &self.vertex_storage);
-            }
-        }
+		// ---------- upload / (re-)create VBOs -----------------------------------
+		if let Some(lines_gpu) = &self.gpu {
+			if let Ok(mut g) = lines_gpu.lock() {
+				g.upload_vertices(gl, &self.vertex_storage);
+			}
+		}
+
+		// Faces VBO is present only while “faces” is checked
+		if self.faces && !faces.is_empty() {
+			let faces_gpu = self
+				.gpu_faces
+				.get_or_insert_with(|| Arc::new(Mutex::new(unsafe { renderer::GpuLines::new(gl) })));
+			if let Ok(mut g) = faces_gpu.lock() {
+				g.upload_vertices(gl, &faces);
+			}
+		} else {
+			self.gpu_faces = None; // turn off solid drawing
+		}
     }
 }
 
@@ -337,8 +375,11 @@ impl eframe::App for AluminaApp {
                         });
 
                         ui.separator();
-                        ui.checkbox(&mut self.wireframe, "wireframe");
-                        ui.checkbox(&mut self.grid, "grid");
+                        ui.checkbox(&mut self.edges, "edges");
+                        ui.checkbox(&mut self.faces, "faces");
+                        ui.checkbox(&mut self.normals, "normals");
+                        ui.checkbox(&mut self.vertices, "vertices");
+                        ui.checkbox(&mut self.workarea, "Work area");
 
                         // ────────────── Scale Controls ──────────────
                         ui.separator();
@@ -565,13 +606,29 @@ impl eframe::App for AluminaApp {
                         unsafe { self.sync_buffers(gl) };
 
                         // ── 3) schedule GL paint right after egui’s own meshes ────────
-                        if let Some(gpu_arc) = &self.gpu {
-                            let gpu_for_cb = gpu_arc.clone(); // Arc<Mutex<_>>
+                        if let Some(lines_gpu)=&self.gpu{
+							let lines_gpu = lines_gpu.clone();
+							let faces_gpu = self.gpu_faces.clone();
                             let mvp = mvp(self, rect); // copy for the closure
 
                             let callback = egui_glow::CallbackFn::new(move |_info, painter| {
-                                if let Ok(gpu) = gpu_for_cb.lock() {
-                                    unsafe { gpu.paint(painter.gl(), mvp) };
+                                let gl = painter.gl();
+								unsafe{
+									gl.enable(glow::DEPTH_TEST);
+									gl.depth_func(glow::LEQUAL);
+									gl.clear(glow::DEPTH_BUFFER_BIT);
+
+									// draw filled faces first (slight offset keeps outlines crisp)
+									if let Some(faces_gpu)=&faces_gpu{
+										if let Ok(f)=faces_gpu.lock(){
+											gl.enable(glow::POLYGON_OFFSET_FILL);
+											gl.polygon_offset(1.0,1.0);
+											f.paint_tris(gl,mvp);
+											gl.disable(glow::POLYGON_OFFSET_FILL);
+										}
+									}
+									// then draw outlines
+									if let Ok(l)=lines_gpu.lock(){ l.paint(gl,mvp); }
                                 }
                             });
 

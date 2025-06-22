@@ -1,6 +1,7 @@
 use glow::{Context, HasContext as _};
 use nalgebra::Matrix4;
-use web_sys::console;
+
+pub const EGUI_BLUE: [f32; 3] = [0.0, 0.447, 0.741];
 
 pub struct GpuLines {
     program: glow::Program,
@@ -95,4 +96,12 @@ impl GpuLines {
         gl.bind_vertex_array(Some(self.vao));
         gl.draw_arrays(glow::LINES, 0, self.vertex_count);
     }
+    
+    /// Same geometry/VAO – but drawn as filled triangles.
+	pub unsafe fn paint_tris(&self,gl:&Context,mvp:Matrix4<f32>){
+		gl.use_program(Some(self.program));
+		gl.uniform_matrix_4_f32_slice(Some(&self.u_mvp),false,mvp.as_slice());
+		gl.bind_vertex_array(Some(self.vao));
+		gl.draw_arrays(glow::TRIANGLES,0,self.vertex_count);
+	}
 }
