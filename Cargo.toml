@@ -11,14 +11,14 @@ wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 console_error_panic_hook = { version = "0.1", optional = true }
 wasm-logger = { version = "0.2", optional = true }
-csgrs = { version = "0.18.0", default-features = false, features = ["delaunay", "f64", "stl-io", "dxf-io", "hashmap"] }
+csgrs = { version="0.19.1", default-features = false, features = ["delaunay", "f32", "stl-io", "dxf-io", "hashmap"] }
 uuid = { version = "1.17", features = ["js", "v4"] }
 glow = "0.13.1"
 bytemuck = "1.23.1"
 egui_glow = "0.27.2"
 nalgebra = "0.33.2"
 geo = "0.29"
-futures = "0.3"                   # one-shot channel for the JS change-event
+futures = "0.3"
 js-sys  = "0.3"
 web-sys = { version = "0.3", optional = true, features = [
     "Window", "Document", "HtmlElement", "HtmlInputElement", "File", "FileList",

@@ -212,6 +212,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
+
+[[package]]
 name = "bit-vec"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -637,18 +643,19 @@ checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 
 [[package]]
 name = "csgrs"
-version = "0.18.0"
+version = "0.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df907ed43d6206561f2c2685d570cb482fa792c6d59c3864378db6b8f54180dd"
+checksum = "d37d871a1435e972d476ab82bc4665eb6d32f1230a04a04a09ed1641f6a862cb"
 dependencies = [
  "core2",
+ "doc-image-embed",
  "dxf",
  "either",
  "geo",
  "hashbrown",
  "nalgebra",
- "parry3d-f64",
- "rapier3d-f64",
+ "parry3d",
+ "rapier3d",
  "robust",
  "small_str",
  "stl_io",
@@ -695,6 +702,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330c60081dcc4c72131f8eb70510f1ac07223e5d4163db481a04a0befcffa412"
 dependencies = [
  "libloading",
+]
+
+[[package]]
+name = "doc-image-embed"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4b1c7e5bbb92b417588a5e733e095416c27c06eedc051065cc955a0a8c8389d9"
+dependencies = [
+ "base64",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -2191,10 +2210,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "parry3d-f64"
+name = "parry3d"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed9184cf88474deb3e5ec6c67a8c6fe51ee9572e8c476d44b7de643937a125c5"
+checksum = "a50f0d5730859f8326b26c8057aae09b790804f3e6c9dec38f4b2a1b91664529"
 dependencies = [
  "approx",
  "arrayvec",
@@ -2398,10 +2417,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "rapier3d-f64"
+name = "rapier3d"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75a10d0735644bdc60b54a573a1ba413bab4f4822ce403e4f637f4d0b3d54d6b"
+checksum = "106edf55a415c64d2dccbb79faa2085e2bd02ded26b41b399b04b90219484c7e"
 dependencies = [
  "approx",
  "arrayvec",
@@ -2414,7 +2433,7 @@ dependencies = [
  "num-derive",
  "num-traits 0.2.19",
  "ordered-float",
- "parry3d-f64",
+ "parry3d",
  "profiling",
  "rustc-hash",
  "simba",

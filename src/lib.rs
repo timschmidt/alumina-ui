@@ -23,7 +23,7 @@ use std::{
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Event, HtmlInputElement, window};
-use glow::{Context, HasContext as _};
+use glow::{HasContext as _};
 
 const INVALID_SCALE: Vector3<f32> = Vector3::new(-1.0, -1.0, -1.0);
 
@@ -300,6 +300,54 @@ impl AluminaApp {
 					}
 				}
 			}
+			
+			// === Polygon normals ========================================================
+			if self.normals {
+				const NORMAL_COL: [f32; 3] = [1.0, 0.0, 0.0];          // red
+				let normal_len = (self.work_size.norm() * 0.04) as f32; // ≈ 4 % of diag
+
+				for p in &self.model.polygons {
+					// polygon centroid
+					let mut c = Vector3::zeros();
+					for v in &p.vertices { c += Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32); }
+					c /= p.vertices.len() as f32;
+
+					let n = Vector3::<f32>::new(
+						p.plane.normal().x as f32,
+						p.plane.normal().y as f32,
+						p.plane.normal().z as f32,
+					).normalize() * normal_len;
+
+					self.vertex_storage.extend_from_slice(&[
+						c.x, c.y, c.z, NORMAL_COL[0], NORMAL_COL[1], NORMAL_COL[2],
+						c.x + n.x, c.y + n.y, c.z + n.z, NORMAL_COL[0], NORMAL_COL[1], NORMAL_COL[2],
+					]);
+				}
+			}
+			
+			// === Vertex spheres =========================================================
+			if self.vertices {
+				const VERT_COL: [f32; 3] = [1.0, 1.0, 0.0];           // yellow
+				let r = (self.work_size.norm() * 0.005) as f32;       // ≈ 0.5 % of diag
+
+				// de-dupe identical vertices so we don’t draw the same sphere many times
+				let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
+				let quant = 1_000_000.0; // 1 µm grid
+
+				for p in &self.model.polygons {
+					for v in &p.vertices {
+						let key = (
+							(v.pos.x * quant) as i64,
+							(v.pos.y * quant) as i64,
+							(v.pos.z * quant) as i64,
+						);
+						if seen.insert(key) {
+							let c = Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32);
+							add_vertex_sphere(c, r, VERT_COL, &mut faces);
+						}
+					}
+				}
+			}
 		}
 
 		// ---------- upload / (re-)create VBOs -----------------------------------
@@ -310,7 +358,8 @@ impl AluminaApp {
 		}
 
 		// Faces VBO is present only while “faces” is checked
-		if self.faces && !faces.is_empty() {
+		let need_tris = !faces.is_empty();
+		if need_tris {
 			let faces_gpu = self
 				.gpu_faces
 				.get_or_insert_with(|| Arc::new(Mutex::new(unsafe { renderer::GpuLines::new(gl) })));
@@ -318,7 +367,7 @@ impl AluminaApp {
 				g.upload_vertices(gl, &faces);
 			}
 		} else {
-			self.gpu_faces = None; // turn off solid drawing
+			self.gpu_faces = None;
 		}
     }
 }
@@ -709,6 +758,29 @@ fn mvp(app: &AluminaApp, rect: egui::Rect) -> Matrix4<f32> {
     let model = Translation3::from(pan).to_homogeneous() * app.rotation.to_homogeneous();
 
     proj * view * model
+}
+
+/// Pushes a tiny icosahedron (≈ sphere) into `out`, centred on `c`.
+fn add_vertex_sphere(c: Vector3<f32>, r: f32, col: [f32; 3], out: &mut Vec<f32>) {
+    // golden-ratio icosahedron (12 verts, 20 tris)
+    const PHI: f32 = 1.618_034;
+    const V: &[[f32; 3]] = &[
+        [-1.0,  PHI,  0.0], [ 1.0,  PHI,  0.0], [-1.0, -PHI,  0.0], [ 1.0, -PHI,  0.0],
+        [ 0.0, -1.0,  PHI], [ 0.0,  1.0,  PHI], [ 0.0, -1.0, -PHI], [ 0.0,  1.0, -PHI],
+        [ PHI,  0.0, -1.0], [ PHI,  0.0,  1.0], [-PHI,  0.0, -1.0], [-PHI,  0.0,  1.0],
+    ];
+    const I: &[[u16; 3]] = &[
+        [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],
+        [10,7,6],[7,1,8],[3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],
+        [2,4,11],[6,2,10],[8,6,7],[9,8,1],
+    ];
+
+    for idx in I {
+        for &i in idx {
+            let v = Vector3::from(V[i as usize]) * r + c;
+            out.extend_from_slice(&[v.x, v.y, v.z, col[0], col[1], col[2]]);
+        }
+    }
 }
 
 fn spawn_file_picker(
