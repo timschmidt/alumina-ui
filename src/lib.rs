@@ -18,6 +18,7 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU32, Ordering},
     },
+    collections::HashSet,
 };
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
@@ -232,7 +233,7 @@ impl AluminaApp {
         }
 
         // ── 2) model / slice ──────────────────────────────────────────────
-        fn add_line_string(ls: &LineString<f64>, z: f32, col: [f32; 3], out: &mut Vec<f32>) {
+        fn add_line_string(ls: &LineString<f32>, z: f32, col: [f32; 3], out: &mut Vec<f32>) {
             for w in ls.0.windows(2) {
                 let a = w[0];
                 let b = w[1];
