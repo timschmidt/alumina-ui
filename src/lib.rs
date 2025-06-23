@@ -22,7 +22,7 @@ use std::{
 };
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Event, HtmlInputElement, window};
+use web_sys::{Event, HtmlInputElement, HtmlCanvasElement, window};
 use glow::{HasContext as _};
 
 const INVALID_SCALE: Vector3<f32> = Vector3::new(-1.0, -1.0, -1.0);
@@ -439,7 +439,7 @@ impl eframe::App for AluminaApp {
                                 ui.add(
                                     egui::DragValue::new(&mut self.model_scale.x)
                                         .speed(0.01)
-                                        .clamp_range(0.01..=100.0),
+                                        .range(0.01..=100.0),
                                 );
                             });
                             ui.horizontal(|ui| {
@@ -447,7 +447,7 @@ impl eframe::App for AluminaApp {
                                 ui.add(
                                     egui::DragValue::new(&mut self.model_scale.y)
                                         .speed(0.01)
-                                        .clamp_range(0.01..=100.0),
+                                        .range(0.01..=100.0),
                                 );
                             });
                             ui.horizontal(|ui| {
@@ -455,7 +455,7 @@ impl eframe::App for AluminaApp {
                                 ui.add(
                                     egui::DragValue::new(&mut self.model_scale.z)
                                         .speed(0.01)
-                                        .clamp_range(0.01..=100.0),
+                                        .range(0.01..=100.0),
                                 );
                             });
 
@@ -517,7 +517,7 @@ impl eframe::App for AluminaApp {
                             ui.add(
                                 egui::DragValue::new(&mut self.layer_height)
                                     .speed(0.01)
-                                    .clamp_range(0.01..=10.0),
+                                    .range(0.01..=10.0),
                             );
                         });
 
@@ -527,7 +527,7 @@ impl eframe::App for AluminaApp {
                             ui.label("Current layer:");
                             ui.add(
                                 egui::DragValue::new(&mut self.current_layer)
-                                    .clamp_range(0..=max_layers)
+                                    .range(0..=max_layers)
                                     .speed(1),
                             );
                             if self.current_layer != prev {
@@ -880,12 +880,22 @@ pub async fn start() -> Result<(), JsValue> {
 
     let web_options = eframe::WebOptions::default();
 
-    // The element id must match the <canvas> in your index.html
+    // ⯈ NEW: obtain the canvas element
+    let document = web_sys::window()
+        .expect("no window")
+        .document()
+        .expect("no document");
+    let canvas = document
+        .get_element_by_id("alumina_canvas")
+        .expect("canvas not found")
+        .dyn_into::<HtmlCanvasElement>()?;   // ← cast
+
+    // ⯈ Pass the element instead of the id
     eframe::WebRunner::new()
         .start(
-            "alumina_canvas", // canvas id
+            canvas,
             web_options,
-            Box::new(|cc| Box::new(AluminaApp::new(cc))),
+            Box::new(|cc| Ok(Box::new(AluminaApp::new(cc)))),
         )
         .await?;
 
