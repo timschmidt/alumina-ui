@@ -3,7 +3,7 @@ mod renderer;
 
 use csgrs::csg::CSG;
 use eframe::egui;
-use futures::channel::oneshot;
+use futures_channel::oneshot;
 use geo::{Geometry, LineString};
 use js_sys::Uint8Array;
 use log::Level;
@@ -873,14 +873,12 @@ pub async fn start() -> Result<(), JsValue> {
         log::warn!("[alumina] second call to `start()` ignored");
         return Ok(());
     }
-    // Redirect `log` macros & panic messages to the browser console
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
     console_error_panic_hook::set_once();
-    let _ = console_log::init_with_level(Level::Debug);
+	console_log::init_with_level(Level::Debug).expect("failed to init logger");
 
     let web_options = eframe::WebOptions::default();
 
-    // ⯈ NEW: obtain the canvas element
+    // obtain the canvas element
     let document = web_sys::window()
         .expect("no window")
         .document()
@@ -890,7 +888,7 @@ pub async fn start() -> Result<(), JsValue> {
         .expect("canvas not found")
         .dyn_into::<HtmlCanvasElement>()?;   // ← cast
 
-    // ⯈ Pass the element instead of the id
+    // Pass the element instead of the id
     eframe::WebRunner::new()
         .start(
             canvas,

@@ -5,28 +5,27 @@ edition = "2024"
 
 [dependencies]
 eframe = { version = "0.29.1", default-features = false, features = ["glow"] }
-egui = { version = "0.29.1" }
-# The following are only pulled in when compiling for the web target
-wasm-bindgen = { version = "0.2" }
-wasm-bindgen-futures = { version = "0.4" }
-console_error_panic_hook = { version = "0.1" }
-wasm-logger = { version = "0.2" }
+egui = { version = "0.29.1", default-features = false }
+wasm-bindgen = { version = "0.2", default-features = false }
+wasm-bindgen-futures = { version = "0.4", default-features = false }
+console_error_panic_hook = { version = "0.1", default-features = false }
+#wasm-logger = { version = "0.2", default-features = false }
 csgrs = { version="0.19.1", default-features = false, features = ["delaunay", "f32", "stl-io", "dxf-io", "hashmap"] }
-uuid = { version = "1.17", features = ["js", "v4"] }
-glow = "0.14"
-bytemuck = "1.23.1"
-egui_glow = "0.29.1"
-nalgebra = "0.33.2"
-geo = "0.29"
-futures = "0.3"
-js-sys  = "0.3"
+uuid = { version = "1.17", default-features = false, features = ["js", "v4"] }
+glow = { version = "0.14", default-features = false }
+bytemuck = { version = "1.23.1", default-features = false }
+egui_glow = { version = "0.29.1", default-features = false }
+nalgebra = { version = "0.33.2", default-features = false }
+geo = { version = "0.29", default-features = false }
+futures-channel = { version = "0.3", default-features = false, features = ["alloc"] }
+js-sys  = { version = "0.3", default-features = false }
 web-sys = { version = "0.3", features = [
     "Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlCanvasElement", "File", "FileList",
     "Event", "EventTarget", "Blob",
 ] }
-once_cell = "1.21.3"
-console_log = "1.0.0"
-log = "0.4.27"
+once_cell = { version = "1.21.3", default-features = false }
+console_log = { version = "1.0.0", default-features = false }
+log = { version = "0.4.27", default-features = false }
 
 [lib]
 crate-type = ["cdylib"]
