@@ -353,7 +353,7 @@ impl AluminaApp {
 		// ---------- upload / (re-)create VBOs -----------------------------------
 		if let Some(lines_gpu) = &self.gpu {
 			if let Ok(mut g) = lines_gpu.lock() {
-				g.upload_vertices(gl, &self.vertex_storage);
+				unsafe { g.upload_vertices(gl, &self.vertex_storage) };
 			}
 		}
 
@@ -364,7 +364,7 @@ impl AluminaApp {
 				.gpu_faces
 				.get_or_insert_with(|| Arc::new(Mutex::new(unsafe { renderer::GpuLines::new(gl) })));
 			if let Ok(mut g) = faces_gpu.lock() {
-				g.upload_vertices(gl, &faces);
+				unsafe { g.upload_vertices(gl, &faces) };
 			}
 		} else {
 			self.gpu_faces = None;
