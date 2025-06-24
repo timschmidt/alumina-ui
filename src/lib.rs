@@ -28,6 +28,58 @@ use glow::{HasContext as _};
 const INVALID_SCALE: Vector3<f32> = Vector3::new(-1.0, -1.0, -1.0);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    Laser,
+    Plasma,
+    Extruder,
+    Endmill,
+    Drill,
+    DlpLcd,   // “DLP / LCD”
+}
+
+impl std::fmt::Display for Tool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Tool::*;
+        write!(
+            f,
+            "{}",
+            match self {
+                Laser => "Laser",
+                Plasma => "Plasma",
+                Extruder => "Extruder",
+                Endmill => "Endmill",
+                Drill => "Drill",
+                DlpLcd => "DLP / LCD",
+            }
+        )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InfillType {
+    Linear,
+    Gyroid,
+    SchwarzP,
+    SchwarzD,
+}
+
+impl std::fmt::Display for InfillType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use InfillType::*;
+        write!(
+            f,
+            "{}",
+            match self {
+                Linear => "Linear",
+                Gyroid => "Gyroid",
+                SchwarzP => "Schwarz P",
+                SchwarzD => "Schwarz D",
+            }
+        )
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Control,
     Diagnostics,
@@ -74,6 +126,25 @@ pub struct AluminaApp {
     selected_tab: Tab,
     diag_poll: bool,
     diag_led: bool,
+    selected_tool: Tool,
+    // Laser
+    kerf: f32,
+    // Plasma
+    touch_off: bool,
+    // Extruder
+    perimeters: i32,
+    infill_type: InfillType,
+    // Endmill
+    endmill_width: f32,
+    endmill_length: f32,
+    // Drill
+    drill_width: f32,
+    drill_length: f32,
+    // DLP / LCD
+    pixels_wide: i32,
+    pixels_tall: i32,
+    layer_delay: f32,
+    peel_distance: f32,
 }
 
 impl AluminaApp {
@@ -127,6 +198,19 @@ impl AluminaApp {
             selected_tab: Tab::Control,
             diag_poll: false,
             diag_led: false,
+			selected_tool: Tool::Laser,   // default
+			kerf: 0.1,
+			touch_off: true,
+			perimeters: 2,
+			infill_type: InfillType::Linear,
+			endmill_width: 10.0,
+			endmill_length: 60.0,
+			drill_width: 10.0,
+			drill_length: 60.0,
+			pixels_wide: 2048,
+			pixels_tall: 1024,
+			layer_delay: 2.0,
+			peel_distance: 15.0,
         }
     }
 
@@ -537,6 +621,132 @@ impl eframe::App for AluminaApp {
                         if ui.checkbox(&mut self.show_slice, "slice").changed() {
                             self.refresh_slice();
                         }
+                        
+                        ui.separator();
+						ui.collapsing("Tool settings", |ui| {
+							// ── tool selector ──
+							ui.horizontal(|ui| {
+								ui.label("Tool:");
+								egui::ComboBox::from_id_salt("tool_select")
+									.selected_text(self.selected_tool.to_string())
+									.show_ui(ui, |ui| {
+										ui.selectable_value(&mut self.selected_tool, Tool::Laser, "Laser");
+										ui.selectable_value(&mut self.selected_tool, Tool::Plasma, "Plasma");
+										ui.selectable_value(&mut self.selected_tool, Tool::Extruder, "Extruder");
+										ui.selectable_value(&mut self.selected_tool, Tool::Endmill, "Endmill");
+										ui.selectable_value(&mut self.selected_tool, Tool::Drill, "Drill");
+										ui.selectable_value(&mut self.selected_tool, Tool::DlpLcd, "DLP / LCD");
+									});
+							});
+
+							// ── tool-specific widgets ──
+							match self.selected_tool {
+								Tool::Laser => {
+									ui.horizontal(|ui| {
+										ui.label("Kerf (mm):");
+										ui.add(
+											egui::DragValue::new(&mut self.kerf)
+												.speed(0.01)
+												.range(0.0..=5.0),
+										);
+									});
+								}
+								Tool::Plasma => {
+									ui.checkbox(&mut self.touch_off, "Touch off");
+								}
+								Tool::Extruder => {
+									ui.horizontal(|ui| {
+										ui.label("Perimeters:");
+										ui.add(
+											egui::DragValue::new(&mut self.perimeters)
+												.speed(1)
+												.range(0..=10),
+										);
+									});
+									ui.horizontal(|ui| {
+										ui.label("Infill type:");
+										egui::ComboBox::from_id_salt("infill_type")
+											.selected_text(self.infill_type.to_string())
+											.show_ui(ui, |ui| {
+												ui.selectable_value(&mut self.infill_type, InfillType::Linear, "Linear");
+												ui.selectable_value(&mut self.infill_type, InfillType::Gyroid, "Gyroid");
+												ui.selectable_value(&mut self.infill_type, InfillType::SchwarzP, "Schwarz P");
+												ui.selectable_value(&mut self.infill_type, InfillType::SchwarzD, "Schwarz D");
+											});
+									});
+								}
+								Tool::Endmill => {
+									ui.horizontal(|ui| {
+										ui.label("Endmill width (mm):");
+										ui.add(
+											egui::DragValue::new(&mut self.endmill_width)
+												.speed(0.1)
+												.range(0.1..=100.0),
+										);
+									});
+									ui.horizontal(|ui| {
+										ui.label("Endmill length (mm):");
+										ui.add(
+											egui::DragValue::new(&mut self.endmill_length)
+												.speed(0.1)
+												.range(1.0..=300.0),
+										);
+									});
+								}
+								Tool::Drill => {
+									ui.horizontal(|ui| {
+										ui.label("Drill width (mm):");
+										ui.add(
+											egui::DragValue::new(&mut self.drill_width)
+												.speed(0.1)
+												.range(0.1..=100.0),
+										);
+									});
+									ui.horizontal(|ui| {
+										ui.label("Drill length (mm):");
+										ui.add(
+											egui::DragValue::new(&mut self.drill_length)
+												.speed(0.1)
+												.range(1.0..=300.0),
+										);
+									});
+								}
+								Tool::DlpLcd => {
+									ui.horizontal(|ui| {
+										ui.label("Pixels wide:");
+										ui.add(
+											egui::DragValue::new(&mut self.pixels_wide)
+												.speed(1)
+												.range(1..=8192),
+										);
+									});
+									ui.horizontal(|ui| {
+										ui.label("Pixels tall:");
+										ui.add(
+											egui::DragValue::new(&mut self.pixels_tall)
+												.speed(1)
+												.range(1..=8192),
+										);
+									});
+									ui.horizontal(|ui| {
+										ui.label("Layer delay (s):");
+										ui.add(
+											egui::DragValue::new(&mut self.layer_delay)
+												.speed(0.1)
+												.range(0.0..=60.0),
+										);
+									});
+									ui.horizontal(|ui| {
+										ui.label("Peel distance (mm):");
+										ui.add(
+											egui::DragValue::new(&mut self.peel_distance)
+												.speed(0.1)
+												.range(0.0..=100.0),
+										);
+									});
+								}
+							}
+						});
 
                         ui.separator();
                         if ui.button("load workpiece").clicked() {
