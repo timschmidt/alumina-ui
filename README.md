@@ -25,5 +25,4 @@ trunk serve --open --release
 - send toolpaths to firmware
 - implement SD card support
 - create oscope 2D plot on Diagnostic tab
-- update to eframe v0.29
-- integrate [egui_node_graph2](https://github.com/philpax/egui_node_graph2) with Design tab
+- read last graph node instead of first
