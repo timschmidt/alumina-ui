@@ -1,5 +1,6 @@
 #![warn(clippy::pedantic)]
 mod renderer;
+mod design_graph;
 
 use csgrs::csg::CSG;
 use eframe::egui;
@@ -24,6 +25,8 @@ use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Event, HtmlInputElement, HtmlCanvasElement, window};
 use glow::{HasContext as _};
+use crate::design_graph::{AllTemplates, UserState};
+use egui_node_graph2::{GraphEditorState};
 
 const INVALID_SCALE: Vector3<f32> = Vector3::new(-1.0, -1.0, -1.0);
 
@@ -145,6 +148,13 @@ pub struct AluminaApp {
     pixels_tall: i32,
     layer_delay: f32,
     peel_distance: f32,
+    design_state: GraphEditorState<
+        design_graph::NodeData,
+        design_graph::DType,
+        design_graph::DValue,
+        design_graph::Template,
+        UserState>,
+    design_user_state: UserState,
 }
 
 impl AluminaApp {
@@ -211,6 +221,8 @@ impl AluminaApp {
 			pixels_tall: 1024,
 			layer_delay: 2.0,
 			peel_distance: 15.0,
+			design_state: GraphEditorState::default(),
+			design_user_state: UserState::default(),
         }
     }
 
@@ -594,33 +606,6 @@ impl eframe::App for AluminaApp {
                                 ui.add(egui::DragValue::new(&mut self.work_size.z).speed(1.0));
                             });
                         });
-
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label("Layer height (mm):");
-                            ui.add(
-                                egui::DragValue::new(&mut self.layer_height)
-                                    .speed(0.01)
-                                    .range(0.01..=10.0),
-                            );
-                        });
-
-                        ui.horizontal(|ui| {
-                            let max_layers = (self.work_size.z / self.layer_height).floor() as i32;
-                            let prev = self.current_layer;
-                            ui.label("Current layer:");
-                            ui.add(
-                                egui::DragValue::new(&mut self.current_layer)
-                                    .range(0..=max_layers)
-                                    .speed(1),
-                            );
-                            if self.current_layer != prev {
-                                self.refresh_slice();
-                            }
-                        });
-                        if ui.checkbox(&mut self.show_slice, "slice").changed() {
-                            self.refresh_slice();
-                        }
                         
                         ui.separator();
 						ui.collapsing("Tool settings", |ui| {
@@ -747,6 +732,33 @@ impl eframe::App for AluminaApp {
 								}
 							}
 						});
+						
+						ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label("Layer height (mm):");
+                            ui.add(
+                                egui::DragValue::new(&mut self.layer_height)
+                                    .speed(0.01)
+                                    .range(0.01..=10.0),
+                            );
+                        });
+
+                        ui.horizontal(|ui| {
+                            let max_layers = (self.work_size.z / self.layer_height).floor() as i32;
+                            let prev = self.current_layer;
+                            ui.label("Current layer:");
+                            ui.add(
+                                egui::DragValue::new(&mut self.current_layer)
+                                    .range(0..=max_layers)
+                                    .speed(1),
+                            );
+                            if self.current_layer != prev {
+                                self.refresh_slice();
+                            }
+                        });
+                        if ui.checkbox(&mut self.show_slice, "slice").changed() {
+                            self.refresh_slice();
+                        }
 
                         ui.separator();
                         if ui.button("load workpiece").clicked() {
@@ -918,22 +930,43 @@ impl eframe::App for AluminaApp {
             }
 
             Tab::Design => {
-                egui::SidePanel::left("design_side")
-                    .resizable(false)
-                    .min_width(140.0)
-                    .show(ctx, |ui| {
-                        ui.heading("Design");
-                        ui.separator();
+				egui::SidePanel::left("design_side")
+					.resizable(false)
+					.min_width(140.0)
+					.show(ctx, |ui| {
+						ui.heading("Design");
+						ui.separator();
+						if ui.button("Clear graph").clicked() {
+							self.design_state = GraphEditorState::default();
+						}
+						if ui.button("Apply to model").clicked() {
+							// Find any selected output; fall back to the first node’s first out-port
+							if let Some(root_out) =
+								self.design_state.graph.outputs.keys().next()
+							{
+								match design_graph::evaluate(&self.design_state.graph, root_out) {
+									Ok(csg) => self.set_base_model(csg.float()),
+									Err(e)  => log::error!("Graph eval failed: {e}"),
+								}
+							}
+						}
+						if ui.button("Save .graph").clicked() {
+							// serialise self.design_state.graph and trigger download …
+						}
+					});
 
-                        if ui.button("Load").clicked() { /* TODO: hook-up */ }
-                        if ui.button("Save").clicked() { /* TODO: hook-up */ }
-                        if ui.button("Render").clicked() { /* TODO: hook-up */ }
-                    });
-
-                egui::CentralPanel::default().show(ctx, |_| {
-                    // (optional) placeholder
-                });
-            }
+				egui::CentralPanel::default().show(ctx, |ui| {
+					ui.set_min_size(ui.available_size());
+					let resp = self.design_state.draw_graph_editor(
+						ui,
+						AllTemplates,
+						&mut self.design_user_state,
+						Vec::<egui_node_graph2::NodeResponse<design_graph::EmptyUserResponse, design_graph::NodeData>>::new(),
+					);
+					// (no special per-node responses needed)
+					_ = resp;
+				});
+			}
         }
     }
 }
