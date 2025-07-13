@@ -2,7 +2,7 @@
 mod renderer;
 mod design_graph;
 
-use csgrs::csg::CSG;
+use csgrs::{mesh::Mesh, sketch::Sketch, traits::CSG};
 use eframe::egui;
 use futures_channel::oneshot;
 use geo::{Geometry, LineString};
@@ -94,9 +94,9 @@ pub struct AluminaApp {
     translation: egui::Vec2,
     zoom: f32,
     /// Un‑scaled geometry as loaded from disk (or the default icosahedron).
-    base_model: CSG<()>,
+    base_model: Mesh<()>,
     /// Geometry that is actually rendered (scaled version of `base_model`).
-    model: CSG<()>,
+    model: Mesh<()>,
     /// Desired scale factors set by the user (per‑axis, 1 = no change).
     model_scale: Vector3<f32>,
     /// Last scale that was applied to `model` – lets us avoid needless rebuilds.
@@ -121,7 +121,7 @@ pub struct AluminaApp {
     /// `true` while the “tool-path” view is active
     show_slice: bool,
     /// The last slice that was generated for `current_layer`
-    sliced_layer: Option<CSG<()>>,
+    sliced_layer: Option<Sketch<()>>,
     gpu: Option<Arc<Mutex<renderer::GpuLines>>>,
     gpu_faces:Option<Arc<Mutex<renderer::GpuLines>>>,
     vertex_storage: Vec<f32>,
@@ -159,7 +159,7 @@ pub struct AluminaApp {
 
 impl AluminaApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let base_model = CSG::<()>::icosahedron(100.0, None).float();
+        let base_model = Mesh::<()>::icosahedron(100.0, None).float();
         let model_scale = Vector3::new(1.0, 1.0, 1.0);
 
         // ------------------------------------------------------------------
@@ -254,7 +254,7 @@ impl AluminaApp {
         }
 
         let z = self.current_layer as f32 * self.layer_height;
-        let plane = csgrs::plane::Plane::from_normal(Vector3::z(), z.into());
+        let plane = csgrs::mesh::plane::Plane::from_normal(Vector3::z(), z.into());
         self.sliced_layer = Some(self.model.slice(plane));
     }
 
@@ -265,8 +265,8 @@ impl AluminaApp {
     }
 
     /// Hard-reset base_model *and* force a rebuild/slice
-    fn set_base_model(&mut self, csg: CSG<()>) {
-        self.base_model = csg;
+    fn set_base_model(&mut self, mesh: Mesh<()>) {
+        self.base_model = mesh;
         self.invalidate_model();
         self.refresh_model();
         self.refresh_slice();
@@ -792,9 +792,9 @@ impl eframe::App for AluminaApp {
                     guard.take()
                 };
                 if let Some(bytes) = workpiece_bytes_opt {
-                    match load_csg_from_bytes(&bytes) {
-                        Some(csg) => {
-                            self.set_base_model(csg.float());
+                    match load_mesh_from_bytes(&bytes) {
+                        Some(mesh) => {
+                            self.set_base_model(mesh.float());
                             log::info!(
                                 "[alumina] app#{}   workpiece loaded → {} bytes, poly={}",
                                 self.debug_id,
@@ -814,9 +814,9 @@ impl eframe::App for AluminaApp {
                     guard.take()
                 };
                 if let Some(bytes) = model_bytes_opt {
-                    match load_csg_from_bytes(&bytes) {
-                        Some(csg) => {
-                            self.set_base_model(csg.float());
+                    match load_mesh_from_bytes(&bytes) {
+                        Some(mesh) => {
+                            self.set_base_model(mesh.float());
                             log::info!(
                                 "[alumina] app#{}   model loaded → {} bytes, poly={}",
                                 self.debug_id,
@@ -945,7 +945,7 @@ impl eframe::App for AluminaApp {
 								self.design_state.graph.outputs.keys().next()
 							{
 								match design_graph::evaluate(&self.design_state.graph, root_out) {
-									Ok(csg) => self.set_base_model(csg.float()),
+									Ok(mesh) => self.set_base_model(mesh.float()),
 									Err(e)  => log::error!("Graph eval failed: {e}"),
 								}
 							}
@@ -1093,13 +1093,13 @@ fn spawn_file_picker(
     });
 }
 
-fn load_csg_from_bytes(bytes: &[u8]) -> Option<CSG<()>> {
-    if let Ok(csg) = CSG::<()>::from_stl(bytes, None) {
-        return Some(csg);
+fn load_mesh_from_bytes(bytes: &[u8]) -> Option<Mesh<()>> {
+    if let Ok(m) = Mesh::<()>::from_stl(bytes, None) {
+        return Some(m);
     }
 
-    if let Ok(csg) = CSG::<()>::from_dxf(bytes, None) {
-        return Some(csg);
+    if let Ok(m) = Mesh::<()>::from_dxf(bytes, None) {
+        return Some(m);
     }
 
     None

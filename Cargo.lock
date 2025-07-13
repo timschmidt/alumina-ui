@@ -359,7 +359,7 @@ version = "0.15.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d067ad48b8650848b989a59a86c6c36a995d02d2bf778d45c3c5d57bc2718f02"
 dependencies = [
- "smallvec 1.15.1",
+ "smallvec",
  "target-lexicon",
 ]
 
@@ -585,9 +585,9 @@ checksum = "43da5946c66ffcc7745f48db692ffbb10a83bfe0afd96235c5c2a4fb23994929"
 
 [[package]]
 name = "csgrs"
-version = "0.19.1"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d37d871a1435e972d476ab82bc4665eb6d32f1230a04a04a09ed1641f6a862cb"
+checksum = "7c40a9baee74e041713801e3f04ba4198a18d7fca5726383ef6e5551cde98e9d"
 dependencies = [
  "core2",
  "doc-image-embed",
@@ -599,7 +599,6 @@ dependencies = [
  "parry3d",
  "rapier3d",
  "robust",
- "small_str",
  "stl_io",
  "thiserror 2.0.12",
 ]
@@ -800,7 +799,7 @@ checksum = "4f3aa356e9e606c071f94b6fe3d8bbeb93399af5bff31cd3ca8cea4c76d6b12f"
 dependencies = [
  "egui",
  "slotmap",
- "smallvec 1.15.1",
+ "smallvec",
  "thiserror 1.0.69",
 ]
 
@@ -922,7 +921,7 @@ dependencies = [
  "lebe",
  "miniz_oxide",
  "rayon-core",
- "smallvec 1.15.1",
+ "smallvec",
  "zune-inflate",
 ]
 
@@ -1343,7 +1342,7 @@ dependencies = [
  "icu_normalizer_data",
  "icu_properties",
  "icu_provider",
- "smallvec 1.15.1",
+ "smallvec",
  "zerovec",
 ]
 
@@ -1399,7 +1398,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "686f825264d630750a544639377bae737628043f20d38bbc029e8f29ea968a7e"
 dependencies = [
  "idna_adapter",
- "smallvec 1.15.1",
+ "smallvec",
  "utf8_iter",
 ]
 
@@ -2227,7 +2226,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall 0.5.13",
- "smallvec 1.15.1",
+ "smallvec",
  "windows-targets 0.52.6",
 ]
 
@@ -2596,7 +2595,7 @@ checksum = "421400d13ccfd26dfa5858199c30a5d76f9c54e0dba7575273025b43c5175dbb"
 dependencies = [
  "heapless",
  "num-traits 0.2.19",
- "smallvec 1.15.1",
+ "smallvec",
 ]
 
 [[package]]
@@ -2746,26 +2745,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "small_str"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7630599c133ab7e0f5e3eeabdac3bd35091211aec6a9f962150b3f558ca4444"
-dependencies = [
- "serde",
- "smallvec 2.0.0-alpha.11",
-]
-
-[[package]]
 name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
-
-[[package]]
-name = "smallvec"
-version = "2.0.0-alpha.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87b96efa4bd6bdd2ff0c6615cc36fc4970cbae63cfd46ddff5cee35a1b4df570"
 
 [[package]]
 name = "smithay-client-toolkit"
@@ -2821,7 +2804,7 @@ dependencies = [
  "hashbrown",
  "num-traits 0.2.19",
  "robust",
- "smallvec 1.15.1",
+ "smallvec",
 ]
 
 [[package]]
@@ -3180,7 +3163,7 @@ dependencies = [
  "downcast-rs 1.2.1",
  "rustix 0.38.44",
  "scoped-tls",
- "smallvec 1.15.1",
+ "smallvec",
  "wayland-sys",
 ]
 

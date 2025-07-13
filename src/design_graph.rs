@@ -1,6 +1,6 @@
 use egui_node_graph2::*;
-use csgrs::csg::CSG;
-use nalgebra::{Vector3};
+use csgrs::{mesh::Mesh, sketch::Sketch, traits::CSG};
+use nalgebra::Vector3;
 use egui::{self, DragValue};
 
 #[derive(Clone, Debug)]
@@ -8,10 +8,11 @@ pub struct EmptyUserResponse;
 
 impl UserResponseTrait for EmptyUserResponse {}
 
-/// What kinds of data can flow through the graph?
+/// Ports may carry scalars, vectors, planar **sketches**, or volumetric **meshes**.
 #[derive(PartialEq, Eq, Copy, Clone)]
 pub enum DType {
-    Csg,
+    Mesh,
+    Sketch,
     Scalar,
     Vec3,
 }
@@ -19,7 +20,8 @@ pub enum DType {
 /// Run-time value carried by a port when the graph is evaluated.
 #[derive(Clone, Debug)]
 pub enum DValue {
-    Csg(CSG<()>),
+    Mesh(Mesh<()>),
+    Sketch(Sketch<()>),
     Scalar(f32),
     Vec3(Vector3<f32>),
 }
@@ -33,11 +35,14 @@ impl Default for DValue {
 /// A node “template” = what appears in the “add node” pop-up.
 #[derive(Copy, Clone)]
 pub enum Template {
-    // primitives
+    // 3-D primitives
     Cube,
     Sphere,
     Cylinder,
-    // booleans
+    // 2-D primitives
+    Rectangle,
+    Circle,
+    // Booleans (mesh ↔ mesh  OR sketch ↔ sketch)
     Union,
     Subtract,
     Intersect,
@@ -45,40 +50,61 @@ pub enum Template {
     Translate,
     Rotate,
     Scale,
+    // 2-D → 3-D
+    Extrude,
 }
 
 impl Default for Template {
     fn default() -> Self {
-        Template::Cube        // pick whichever variant you like
+        Template::Cube
     }
 }
 
+// Helper: list “root” output sockets of the graph (no consumer attached).
+pub fn graph_roots(graph: &GraphT) -> Vec<OutputId> {
+    use std::collections::HashSet;
+    let mut used = HashSet::<OutputId>::new();
+    for input_id in graph.inputs.keys() {
+        if let Some(src) = graph.connection(input_id) {
+            used.insert(src);
+        }
+    }
+    graph
+        .outputs
+        .keys()
+        .filter(|oid| !used.contains(oid))
+        .collect()
+}
+
 #[derive(Default)]
-pub struct UserState; // we do not need per-graph global state (yet)
+pub struct UserState;
 
 #[derive(Default)]
 pub struct NodeData {
     pub template: Template,
 }
 
-/// Make the three “typeclasses” requested by egui-node-graph:
+/// Color & label palette for sockets
 impl DataTypeTrait<UserState> for DType {
     fn data_type_color(&self, _u: &mut UserState) -> egui::Color32 {
         match self {
-            DType::Csg   => egui::Color32::from_rgb(110, 200, 255),
+            DType::Mesh => egui::Color32::from_rgb(110, 200, 255),
+            DType::Sketch => egui::Color32::from_rgb(120, 180, 120),
             DType::Scalar => egui::Color32::from_rgb(38, 109, 211),
-            DType::Vec3  => egui::Color32::from_rgb(238, 207, 109),
+            DType::Vec3 => egui::Color32::from_rgb(238, 207, 109),
         }
     }
     fn name(&self) -> std::borrow::Cow<'_, str> {
         match self {
-            DType::Csg   => "solid".into(),
+            DType::Mesh => "mesh".into(),
+            DType::Sketch => "sketch".into(),
             DType::Scalar => "scalar".into(),
-            DType::Vec3  => "vec3".into(),
+            DType::Vec3 => "vec3".into(),
         }
     }
 }
 
+/// Node-template plumbing ----------------------------------------------------
 impl NodeTemplateTrait for Template {
     type NodeData = NodeData;
     type DataType = DType;
@@ -89,24 +115,29 @@ impl NodeTemplateTrait for Template {
     fn node_finder_label(&self, _: &mut UserState) -> std::borrow::Cow<'_, str> {
         use Template::*;
         match self {
-            Cube          => "Cube".into(),
-            Sphere        => "Sphere".into(),
-            Cylinder      => "Cylinder".into(),
-            Union         => "Union".into(),
-            Subtract      => "Subtract".into(),
-            Intersect     => "Intersect".into(),
-            Translate     => "Translate".into(),
-            Rotate        => "Rotate".into(),
-            Scale         => "Scale".into(),
+            Cube        => "Cube".into(),
+            Sphere      => "Sphere".into(),
+            Cylinder    => "Cylinder".into(),
+            Rectangle   => "Rectangle".into(),
+            Circle      => "Circle".into(),
+            Union       => "Union".into(),
+            Subtract    => "Subtract".into(),
+            Intersect   => "Intersect".into(),
+            Translate   => "Translate".into(),
+            Rotate      => "Rotate".into(),
+            Scale       => "Scale".into(),
+            Extrude     => "Extrude".into(),
         }
     }
 
     fn node_finder_categories(&self, _: &mut UserState) -> Vec<Self::CategoryType> {
         use Template::*;
         match self {
-            Cube|Sphere|Cylinder          => vec!["Primitives"],
-            Union|Subtract|Intersect      => vec!["Boolean"],
-            Translate|Rotate|Scale        => vec!["Transform"],
+            Cube | Sphere | Cylinder => vec!["3-D / Mesh"],
+            Rectangle | Circle => vec!["2-D / Sketch"],
+            Union | Subtract | Intersect => vec!["Boolean"],
+            Translate | Rotate | Scale => vec!["Transform"],
+            Extrude => vec!["2-D → 3-D"],
         }
     }
 
@@ -144,55 +175,88 @@ impl NodeTemplateTrait for Template {
                 true,
             );
         };
-        let csg_in    = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
-            g.add_input_param(
+        let mesh_in = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
+             g.add_input_param(
                 id,
                 name.into(),
-                DType::Csg,
+                DType::Mesh,
                 DValue::default(),
                 InputParamKind::ConnectionOnly,
                 true,
             );
         };
-        let csg_out   = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
-            g.add_output_param(id, name.into(), DType::Csg);
+	let sketch_in = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
+            g.add_input_param(
+                id,
+                name.into(),
+                DType::Sketch,
+                DValue::default(),
+                InputParamKind::ConnectionOnly,
+                true,
+            );
+        };
+        let mesh_out = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
+            g.add_output_param(id, name.into(), DType::Mesh);
+        };
+        let sketch_out = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
+            g.add_output_param(id, name.into(), DType::Sketch);
         };
 
+        //—-- build socket layout -------------------------------------------
         use Template::*;
         match self {
+            // 3-D
             Cube => {
                 scalar_in(g, "size");
-                csg_out(g, "out");
+                mesh_out(g, "out");
             }
             Sphere => {
                 scalar_in(g, "radius");
-                csg_out(g, "out");
+                mesh_out(g, "out");
             }
             Cylinder => {
                 scalar_in(g, "radius");
                 scalar_in(g, "height");
-                csg_out(g, "out");
+                mesh_out(g, "out");
             }
+            // 2-D
+            Rectangle => {
+                scalar_in(g, "width");
+                scalar_in(g, "height");
+                sketch_out(g, "out");
+            }
+            Circle => {
+                scalar_in(g, "radius");
+                sketch_out(g, "out");
+            }
+            // Boolean (works for both kinds, use same DType for A/B)
             Union | Subtract | Intersect => {
-                csg_in(g, "A");
-                csg_in(g, "B");
-                csg_out(g, "out");
+                mesh_in(g, "A");
+                mesh_in(g, "B");
+                mesh_out(g, "out");
             }
+            // Transforms
             Translate => {
-                csg_in(g, "in");
+                mesh_in(g, "in");
                 vec3_in(g, "offset");
-                csg_out(g, "out");
+                mesh_out(g, "out");
             }
             Rotate => {
-                csg_in(g, "in");
+                mesh_in(g, "in");
                 vec3_in(g, "axis");
                 scalar_in(g, "angle (rad)");
-                csg_out(g, "out");
+                mesh_out(g, "out");
             }
             Scale => {
-                csg_in(g, "in");
+                mesh_in(g, "in");
                 vec3_in(g, "factors");
-                csg_out(g, "out");
+                mesh_out(g, "out");
+            }
+            // 2-D → 3-D
+            Extrude => {
+                sketch_in(g, "profile");
+                scalar_in(g, "height");
+                mesh_out(g, "out");
             }
         }
     }
@@ -205,18 +269,17 @@ impl NodeTemplateIter for AllTemplates {
     fn all_kinds(&self) -> Vec<Self::Item> {
         use Template::*;
         vec![
-            Cube, Sphere, Cylinder,
-            Union, Subtract, Intersect,
-            Translate, Rotate, Scale,
+            Cube, Sphere, Cylinder, Rectangle, Circle, Union, Subtract, Intersect, Translate,
+            Rotate, Scale, Extrude,
         ]
     }
 }
 
 /// We draw scalars/vec3 widgets exactly like in the sample
 impl WidgetValueTrait for DValue {
-    type NodeData   = NodeData;
-    type Response   = EmptyUserResponse;
-    type UserState  = UserState;
+    type NodeData = NodeData;
+    type Response = EmptyUserResponse;
+    type UserState = UserState;
 
     fn value_widget(
         &mut self,
@@ -241,17 +304,23 @@ impl WidgetValueTrait for DValue {
                     ui.label("z"); ui.add(DragValue::new(&mut v.z));
                 });
             }
-            DValue::Csg(_) => { ui.label("solid"); }
+            DValue::Sketch(_) => {
+                ui.label("sketch");
+            }
+            DValue::Mesh(_) => {
+                ui.label("mesh");
+            }
         }
         Vec::new()
     }
 }
 
+/// Only bottom-panel UI (none here)
 impl NodeDataTrait for NodeData {
-    type Response   = EmptyUserResponse;
-    type UserState  = UserState;
-    type DataType   = DType;
-    type ValueType  = DValue;
+    type Response = EmptyUserResponse;
+    type UserState = UserState;
+    type DataType = DType;
+    type ValueType = DValue;
 
     fn bottom_ui(
         &self,
@@ -269,15 +338,14 @@ impl NodeDataTrait for NodeData {
 type Cache = std::collections::HashMap<OutputId, DValue>;
 type GraphT = Graph<NodeData, DType, DValue>;
 
-pub fn evaluate(
-    graph: &GraphT,
-    root: OutputId,           // evaluate “this” output
-) -> anyhow::Result<CSG<()>> {
+/// --------------------------------------------------------------------------
+/// **Graph evaluation** – returns a 3-D `Mesh<()>` to display.
+pub fn evaluate(graph: &GraphT, root: OutputId) -> anyhow::Result<Mesh<()>> {
     let mut cache = Cache::new();
     let val = eval_rec(graph, root, &mut cache)?;
     match val {
-        DValue::Csg(csg) => Ok(csg),
-        _ => anyhow::bail!("root output does not evaluate to a solid"),
+        DValue::Mesh(mesh) => Ok(mesh),
+        _ => anyhow::bail!("root output does not evaluate to a mesh"),
     }
 }
 
@@ -285,7 +353,8 @@ fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<
     if let Some(v) = cache.get(&out) { return Ok(v.clone()); }
     let node_id = graph[out].node;
     let node    = &graph[node_id];
-    use Template::*;
+
+    // Helper to fetch (recursively) an input
     let mut get = |name: &str| -> anyhow::Result<DValue> {
         let in_id = node.get_input(name)?;
         if let Some(src) = graph.connection(in_id) {
@@ -295,53 +364,75 @@ fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<
         }
     };
 
+    use Template::*;
     let value = match node.user_data.template {
+        // 3-D primitives ----------------------------------------------------
         Cube => {
             let size = get("size")?.scalar()?;
-            DValue::Csg(CSG::cube(size, None))
+            DValue::Mesh(Mesh::cube(size.into(), None))
         }
         Sphere => {
             let r = get("radius")?.scalar()?;
-            DValue::Csg(CSG::sphere(r, 24, 24, None))
+            DValue::Mesh(Mesh::sphere(r.into(), 24, 24, None))
         }
         Cylinder => {
             let r = get("radius")?.scalar()?;
             let h = get("height")?.scalar()?;
-            DValue::Csg(CSG::cylinder(r, h, 24, None))
+            DValue::Mesh(Mesh::cylinder(r.into(), h.into(), 24, None))
         }
+
+        // 2-D primitives ----------------------------------------------------
+        Rectangle => {
+            let w = get("width")?.scalar()?;
+            let h = get("height")?.scalar()?;
+            DValue::Sketch(Sketch::rectangle(w.into(), h.into(), None))
+        }
+        Circle => {
+            let r = get("radius")?.scalar()?;
+            DValue::Sketch(Sketch::circle(r.into(), 64, None))
+        }
+
+        // Boolean (mesh) ----------------------------------------------------
         Union => {
-            let a = get("A")?.csg()?;
-            let b = get("B")?.csg()?;
-            DValue::Csg(a.union(&b))
+            let a = get("A")?.mesh()?;
+            let b = get("B")?.mesh()?;
+            DValue::Mesh(a.union(&b))
         }
         Subtract => {
-            let a = get("A")?.csg()?;
-            let b = get("B")?.csg()?;
-            DValue::Csg(a.difference(&b))
+            let a = get("A")?.mesh()?;
+            let b = get("B")?.mesh()?;
+            DValue::Mesh(a.difference(&b))
         }
         Intersect => {
-            let a = get("A")?.csg()?;
-            let b = get("B")?.csg()?;
-            DValue::Csg(a.intersection(&b))
+            let a = get("A")?.mesh()?;
+            let b = get("B")?.mesh()?;
+            DValue::Mesh(a.intersection(&b))
         }
+
+        // Transforms ------------------------------------------------------------
         Translate => {
-            let s = get("in")?.csg()?;
+            let m = get("in")?.mesh()?;
             let o = get("offset")?.vec3()?;
-            DValue::Csg(s.translate(o.x.into(), o.y.into(), o.z.into()))
+            DValue::Mesh(m.translate(o.x.into(), o.y.into(), o.z.into()))
         }
         Rotate => {
-			let s    = get("in")?.csg()?;
-			let axis = get("axis")?.vec3()?.normalize();
-			let ang  = get("angle (rad)")?.scalar()?;
-			let deg  = ang.to_degrees();
-			DValue::Csg(
-				s.rotate(axis.x * deg, axis.y * deg, axis.z * deg)
-			)
-		}
+            let m = get("in")?.mesh()?;
+            let axis = get("axis")?.vec3()?.normalize();
+            let ang = get("angle (rad)")?.scalar()?;
+            let deg = ang.to_degrees();
+            DValue::Mesh(m.rotate(axis.x * deg, axis.y * deg, axis.z * deg))
+        }
         Scale => {
-            let s = get("in")?.csg()?;
+            let m = get("in")?.mesh()?;
             let f = get("factors")?.vec3()?;
-            DValue::Csg(s.scale(f.x.into(), f.y.into(), f.z.into()))
+            DValue::Mesh(m.scale(f.x.into(), f.y.into(), f.z.into()))
+        }
+
+        // 2-D → 3-D ---------------------------------------------------------
+        Extrude => {
+            let s = get("profile")?.sketch()?;
+            let h = get("height")?.scalar()?;
+            DValue::Mesh(s.extrude(h.into()))
         }
     };
 
@@ -349,21 +440,40 @@ fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<
     Ok(value)
 }
 
-// -- tiny helpers ----------------------------------------------------
-
+/// Small helpers for type-safe extraction -----------------------------------
 trait AsTyped {
     fn scalar(self) -> anyhow::Result<f32>;
-    fn vec3(self)   -> anyhow::Result<Vector3<f32>>;
-    fn csg(self)    -> anyhow::Result<CSG<()>>;
+    fn vec3(self) -> anyhow::Result<Vector3<f32>>;
+    fn mesh(self) -> anyhow::Result<Mesh<()>>;
+    fn sketch(self) -> anyhow::Result<Sketch<()>>;
 }
 impl AsTyped for DValue {
     fn scalar(self) -> anyhow::Result<f32> {
-        if let DValue::Scalar(x) = self { Ok(x) } else { anyhow::bail!("expected scalar") }
+        if let DValue::Scalar(x) = self {
+            Ok(x)
+        } else {
+            anyhow::bail!("expected scalar")
+        }
     }
     fn vec3(self) -> anyhow::Result<Vector3<f32>> {
-        if let DValue::Vec3(v) = self { Ok(v) } else { anyhow::bail!("expected vec3") }
+        if let DValue::Vec3(v) = self {
+            Ok(v)
+        } else {
+            anyhow::bail!("expected vec3")
+        }
     }
-    fn csg(self) -> anyhow::Result<CSG<()>> {
-        if let DValue::Csg(c) = self { Ok(c) } else { anyhow::bail!("expected solid") }
+    fn mesh(self) -> anyhow::Result<Mesh<()>> {
+        if let DValue::Mesh(m) = self {
+            Ok(m)
+        } else {
+            anyhow::bail!("expected mesh")
+        }
+    }
+    fn sketch(self) -> anyhow::Result<Sketch<()>> {
+        if let DValue::Sketch(s) = self {
+            Ok(s)
+        } else {
+            anyhow::bail!("expected sketch")
+        }
     }
 }
