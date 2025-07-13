@@ -9,7 +9,6 @@ use geo::{Geometry, LineString};
 use js_sys::Uint8Array;
 use log::Level;
 use nalgebra::{Matrix4, Perspective3, Point3, Translation3, UnitQuaternion, Vector3};
-use once_cell::sync::OnceCell;
 use std::{
     cell::RefCell,
     f32::consts::{FRAC_PI_2, PI},
@@ -37,7 +36,7 @@ enum Tool {
     Extruder,
     Endmill,
     Drill,
-    DlpLcd,   // “DLP / LCD”
+    DlpLcd,
 }
 
 impl std::fmt::Display for Tool {
@@ -1105,18 +1104,8 @@ fn load_mesh_from_bytes(bytes: &[u8]) -> Option<Mesh<()>> {
     None
 }
 
-/// Ensures we only create **one** `AluminaApp` per page, even if the module is
-/// re-loaded by Trunk’s hot-reload mechanism.
-static STARTED: OnceCell<()> = OnceCell::new();
-
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
-    // bail out if we’ve already started once
-    if STARTED.set(()).is_err() {
-        log::warn!("[alumina] second call to `start()` ignored");
-        return Ok(());
-    }
-    console_error_panic_hook::set_once();
 	console_log::init_with_level(Level::Debug).expect("failed to init logger");
 
     let web_options = eframe::WebOptions::default();
