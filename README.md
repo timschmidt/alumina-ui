@@ -28,3 +28,6 @@ trunk serve --open --release
 - implement SD card support
 - create oscope 2D plot on Diagnostic tab
 - read last graph node instead of first
+- enable persistence via https://docs.rs/eframe/latest/eframe/
+- implement tweening for snap view
+- implement pinch to zoom and something for dragging on mobile
