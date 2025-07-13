@@ -137,7 +137,7 @@ impl NodeTemplateTrait for Template {
             Rectangle | Circle => vec!["2-D / Sketch"],
             Union | Subtract | Intersect => vec!["Boolean"],
             Translate | Rotate | Scale => vec!["Transform"],
-            Extrude => vec!["2-D → 3-D"],
+            Extrude => vec!["2-D -> 3-D"],
         }
     }
 
