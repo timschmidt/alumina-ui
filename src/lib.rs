@@ -57,6 +57,49 @@ impl std::fmt::Display for Tool {
     }
 }
 
+/// A single user-loaded model (STL/DXF) plus its per-instance transforms.
+#[derive(Clone)]
+struct ModelEntry {
+    /// File-name or synthesized label shown in the sidebar list.
+    name:          String,
+    /// Geometry exactly as it came off disk (float-shifted but *not* scaled / offset).
+    base:          Mesh<()>,
+    /// Copy actually rendered (base -> scale -> offset).
+    mesh:          Mesh<()>,
+    /// Desired user scale and last-applied scale (so we can lazily rebuild).
+    scale:         Vector3<f32>,
+    applied_scale: Vector3<f32>,
+    /// Desired user offset (mm) and last-applied offset.
+    offset:        Vector3<f32>,
+    applied_offset:Vector3<f32>,
+}
+
+impl ModelEntry {
+    fn new(name: impl Into<String>, base: Mesh<()>) -> Self {
+        Self {
+            name:           name.into(),
+            scale:          Vector3::new(1.0,1.0,1.0),
+            applied_scale:  Vector3::new(1.0,1.0,1.0),
+            offset:         Vector3::zeros(),
+            applied_offset: Vector3::zeros(),
+            mesh:           base.clone(), // immediately rebuilt below
+            base,
+        }
+    }
+
+    /// Apply pending scale / offset if the user changed either parameter.
+    fn refresh(&mut self) {
+        if self.scale    != self.applied_scale
+        || self.offset   != self.applied_offset {
+            self.mesh = self.base.clone()
+                        .scale(self.scale.x.into(), self.scale.y.into(), self.scale.z.into())
+                        .translate(self.offset.x.into(), self.offset.y.into(), self.offset.z.into());
+            self.applied_scale  = self.scale;
+            self.applied_offset = self.offset;
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum InfillType {
     Linear,
@@ -89,21 +132,13 @@ enum Tab {
 }
 
 pub struct AluminaApp {
-    rotation: UnitQuaternion<f32>,
-    translation: egui::Vec2,
-    zoom: f32,
-    /// Un‑scaled geometry as loaded from disk (or the default icosahedron).
-    base_model: Mesh<()>,
-    /// Geometry that is actually rendered (scaled version of `base_model`).
-    model: Mesh<()>,
-    /// Desired scale factors set by the user (per‑axis, 1 = no change).
-    model_scale: Vector3<f32>,
-    /// Last scale that was applied to `model` – lets us avoid needless rebuilds.
-    applied_scale: Vector3<f32>,
-    /// User-controlled translation (mm)
-    model_offset: Vector3<f32>,
-    /// Last translation that was applied to `model`
-    applied_offset: Vector3<f32>,
+    rotation:UnitQuaternion<f32>,
+    translation:egui::Vec2,
+    zoom:f32,
+    /// All user-loaded models (plus the default one).
+    models:Vec<ModelEntry>,
+    /// Index of the *currently-selected* model in the sidebar (if any).
+    selected_model:Option<usize>,
     workpiece_data: Arc<Mutex<Option<Vec<u8>>>>,
     model_data: Arc<Mutex<Option<Vec<u8>>>>,
     wireframe: bool,
@@ -124,7 +159,6 @@ pub struct AluminaApp {
     gpu: Option<Arc<Mutex<renderer::GpuLines>>>,
     gpu_faces:Option<Arc<Mutex<renderer::GpuLines>>>,
     vertex_storage: Vec<f32>,
-    debug_id: u32,
     selected_tab: Tab,
     diag_poll: bool,
     diag_led: bool,
@@ -158,8 +192,8 @@ pub struct AluminaApp {
 
 impl AluminaApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let base_model = Mesh::<()>::icosahedron(100.0, None).float();
-        let model_scale = Vector3::new(1.0, 1.0, 1.0);
+        let mut entry = ModelEntry::new("icosahedron", Mesh::<()>::icosahedron(100.0,None).float());
+        entry.refresh();
 
         // ------------------------------------------------------------------
         // Default camera
@@ -173,20 +207,12 @@ impl AluminaApp {
         let front_rot = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), -FRAC_PI_2); // “Front”
         let initial_zoom = 1.75_f32;
 
-        // ----- assign a unique id ------------------------------------------------
-        static INSTANCE_SEQ: AtomicU32 = AtomicU32::new(0);
-        let id = INSTANCE_SEQ.fetch_add(1, Ordering::SeqCst);
-
         Self {
             rotation: front_rot,
             translation: egui::Vec2::new(0.0, -250.0),
             zoom: initial_zoom,
-            base_model: base_model.clone(),
-            model: base_model,
-            model_scale,
-            applied_scale: model_scale,
-            model_offset: Vector3::zeros(),
-            applied_offset: Vector3::zeros(),
+            models:vec![entry],
+            selected_model:Some(0),
             workpiece_data: Arc::new(Mutex::new(None)),
             model_data: Arc::new(Mutex::new(None)),
             wireframe: true,
@@ -203,7 +229,6 @@ impl AluminaApp {
             gpu: None,
             gpu_faces:None,
             vertex_storage: Vec::new(),
-            debug_id: id,
             selected_tab: Tab::Control,
             diag_poll: false,
             diag_led: false,
@@ -225,26 +250,12 @@ impl AluminaApp {
         }
     }
 
-    /// Re‑creates the renderable `model` if the requested scale or translation has changed.
-    fn refresh_model(&mut self) {
-        if self.model_scale != self.applied_scale || self.model_offset != self.applied_offset {
-            self.model = self
-                .base_model
-                .clone()
-                .scale(
-                    self.model_scale.x.into(),
-                    self.model_scale.y.into(),
-                    self.model_scale.z.into(),
-                )
-                .translate(
-                    self.model_offset.x.into(),
-                    self.model_offset.y.into(),
-                    self.model_offset.z.into(),
-                );
-            self.applied_scale = self.model_scale;
-            self.applied_offset = self.model_offset;
+    /// Refresh *all* models (each entry decides whether it needs to rebuild).
+    fn refresh_models(&mut self){
+        for m in &mut self.models {
+            m.refresh();
         }
-    }
+     }
 
     /// Re-builds `sliced_layer` for the current Z level.
     fn refresh_slice(&mut self) {
@@ -252,22 +263,48 @@ impl AluminaApp {
             return;
         }
 
-        let z = self.current_layer as f32 * self.layer_height;
-        let plane = csgrs::mesh::plane::Plane::from_normal(Vector3::z(), z.into());
-        self.sliced_layer = Some(self.model.slice(plane));
+        // slice a *union* of all models
+        let z=self.current_layer as f32*self.layer_height;
+        let plane=csgrs::mesh::plane::Plane::from_normal(Vector3::z(),z.into());
+        let mut iter = self.models.iter();
+        if let Some(first) = iter.next() {
+            let mut combined = first.mesh.clone();
+            for m in iter { combined = combined.union(&m.mesh); }
+            self.sliced_layer = Some(combined.slice(plane));
+        }
     }
 
     /// Marks `model` as dirty so that next frame will rebuild
-    fn invalidate_model(&mut self) {
-        self.applied_scale = INVALID_SCALE;
-        self.applied_offset = Vector3::repeat(f32::NAN);
+    fn invalidate_selected_model(&mut self){
+        if let Some(idx) = self.selected_model {
+            self.models[idx].applied_scale  = INVALID_SCALE;
+            self.models[idx].applied_offset = Vector3::repeat(f32::NAN);
+        }
+     }
+
+    /// Replace currently-selected entry’s *base* geometry.
+    fn set_selected_base(&mut self, mesh: Mesh<()>, name: String) {
+        if let Some(idx) = self.selected_model {
+            self.models[idx].base = mesh;
+            self.models[idx].name = name;
+            self.invalidate_selected_model();
+            self.refresh_models();
+            self.refresh_slice();
+        }
+     }
+     
+     /// convenience: currently-selected entry (mutable)
+    fn sel_mut(&mut self) -> Option<&mut ModelEntry> {
+        self.selected_model
+            .and_then(move |i| self.models.get_mut(i))
     }
 
-    /// Hard-reset base_model *and* force a rebuild/slice
-    fn set_base_model(&mut self, mesh: Mesh<()>) {
-        self.base_model = mesh;
-        self.invalidate_model();
-        self.refresh_model();
+    /// Add a *new* model and make it the selection.
+    fn add_model(&mut self, mesh: Mesh<()>, name: String) {
+        let mut e = ModelEntry::new(name, mesh);
+        e.refresh();
+        self.models.push(e);
+        self.selected_model = Some(self.models.len()-1);
         self.refresh_slice();
     }
 }
@@ -363,33 +400,39 @@ impl AluminaApp {
 			/* ---------- model wire-frame (edges) ----------------------------- */
 			if self.edges {
 				const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
-				for p in &self.model.polygons {
-					for (a, b) in p.edges() {
-						self.vertex_storage.extend_from_slice(&[
-							a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,
-							WHITE[0], WHITE[1], WHITE[2],
-							b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,
-							WHITE[0], WHITE[1], WHITE[2],
-						]);
+				for model_entry in &self.models {
+					let model = &model_entry.mesh;
+					for p in &model.polygons {
+						for (a, b) in p.edges() {
+							self.vertex_storage.extend_from_slice(&[
+								a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,
+								WHITE[0], WHITE[1], WHITE[2],
+								b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,
+								WHITE[0], WHITE[1], WHITE[2],
+							]);
+						}
 					}
 				}
 			}
 
 			/* ---------- model faces (solid) ---------------------------------- */
 			if self.faces {
-				for p in &self.model.polygons {
-					let verts = &p.vertices;
-					if verts.len() >= 3 {
-						for i in 1..verts.len() - 1 {
-							for v in [&verts[0].pos, &verts[i].pos, &verts[i + 1].pos] {
-								faces.extend_from_slice(&[
-									v.x as f32,
-									v.y as f32,
-									v.z as f32,
-									renderer::EGUI_BLUE[0],
-									renderer::EGUI_BLUE[1],
-									renderer::EGUI_BLUE[2],
-								]);
+				for model_entry in &self.models {
+					let model = &model_entry.mesh;
+					for p in &model.polygons {
+						let verts = &p.vertices;
+						if verts.len() >= 3 {
+							for i in 1..verts.len() - 1 {
+								for v in [&verts[0].pos, &verts[i].pos, &verts[i + 1].pos] {
+									faces.extend_from_slice(&[
+										v.x as f32,
+										v.y as f32,
+										v.z as f32,
+										renderer::EGUI_BLUE[0],
+										renderer::EGUI_BLUE[1],
+										renderer::EGUI_BLUE[2],
+									]);
+								}
 							}
 						}
 					}
@@ -401,22 +444,25 @@ impl AluminaApp {
 				const NORMAL_COL: [f32; 3] = [1.0, 0.0, 0.0];          // red
 				let normal_len = (self.work_size.norm() * 0.04) as f32; // ≈ 4 % of diag
 
-				for p in &self.model.polygons {
-					// polygon centroid
-					let mut c = Vector3::zeros();
-					for v in &p.vertices { c += Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32); }
-					c /= p.vertices.len() as f32;
+				for model_entry in &self.models {
+					let model = &model_entry.mesh;
+					for p in &model.polygons {
+						// polygon centroid
+						let mut c = Vector3::zeros();
+						for v in &p.vertices { c += Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32); }
+						c /= p.vertices.len() as f32;
 
-					let n = Vector3::<f32>::new(
-						p.plane.normal().x as f32,
-						p.plane.normal().y as f32,
-						p.plane.normal().z as f32,
-					).normalize() * normal_len;
+						let n = Vector3::<f32>::new(
+							p.plane.normal().x as f32,
+							p.plane.normal().y as f32,
+							p.plane.normal().z as f32,
+						).normalize() * normal_len;
 
-					self.vertex_storage.extend_from_slice(&[
-						c.x, c.y, c.z, NORMAL_COL[0], NORMAL_COL[1], NORMAL_COL[2],
-						c.x + n.x, c.y + n.y, c.z + n.z, NORMAL_COL[0], NORMAL_COL[1], NORMAL_COL[2],
-					]);
+						self.vertex_storage.extend_from_slice(&[
+							c.x, c.y, c.z, NORMAL_COL[0], NORMAL_COL[1], NORMAL_COL[2],
+							c.x + n.x, c.y + n.y, c.z + n.z, NORMAL_COL[0], NORMAL_COL[1], NORMAL_COL[2],
+						]);
+					}
 				}
 			}
 			
@@ -429,16 +475,19 @@ impl AluminaApp {
 				let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
 				let quant = 1_000_000.0; // 1 µm grid
 
-				for p in &self.model.polygons {
-					for v in &p.vertices {
-						let key = (
-							(v.pos.x * quant) as i64,
-							(v.pos.y * quant) as i64,
-							(v.pos.z * quant) as i64,
-						);
-						if seen.insert(key) {
-							let c = Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32);
-							add_vertex_sphere(c, r, VERT_COL, &mut faces);
+				for model_entry in &self.models {
+					let model = &model_entry.mesh;
+					for p in &model.polygons {
+						for v in &p.vertices {
+							let key = (
+								(v.pos.x * quant) as i64,
+								(v.pos.y * quant) as i64,
+								(v.pos.z * quant) as i64,
+							);
+							if seen.insert(key) {
+								let c = Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32);
+								add_vertex_sphere(c, r, VERT_COL, &mut faces);
+							}
 						}
 					}
 				}
@@ -487,6 +536,31 @@ impl eframe::App for AluminaApp {
                     .min_width(140.0)
                     .show(ctx, |ui| {
                         ui.heading("Control");
+                        ui.separator();
+                        
+                        ui.collapsing("Loaded models", |ui| {
+							let mut remove: Option<usize> = None;
+							for (i, m) in self.models.iter_mut().enumerate() {
+								ui.horizontal(|ui| {
+									if ui.selectable_label(self.selected_model==Some(i), &m.name).clicked() {
+									   self.selected_model = Some(i);
+									}
+									if ui.button("✕").clicked() { remove = Some(i); }
+								});
+							}
+							if ui.button("Add…").clicked() {
+								self.selected_model = None; // -> add after file dialog
+								spawn_file_picker(Arc::clone(&self.model_data),"Model mesh (stl,dxf)",&["stl","dxf"]);
+							}
+							if let Some(idx) = remove {
+								self.models.remove(idx);
+								if let Some(selected) = &mut self.selected_model {
+									if *selected >= idx {
+										*selected = selected.saturating_sub(1);
+									}
+								}
+							}
+						});
 
                         ui.separator();
                         ui.label("Snap view");
@@ -529,66 +603,104 @@ impl eframe::App for AluminaApp {
                         // ────────────── Scale Controls ──────────────
                         ui.separator();
                         ui.collapsing("Model scale", |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label("X:");
-                                ui.add(
-                                    egui::DragValue::new(&mut self.model_scale.x)
-                                        .speed(0.01)
-                                        .range(0.01..=100.0),
-                                );
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Y:");
-                                ui.add(
-                                    egui::DragValue::new(&mut self.model_scale.y)
-                                        .speed(0.01)
-                                        .range(0.01..=100.0),
-                                );
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Z:");
-                                ui.add(
-                                    egui::DragValue::new(&mut self.model_scale.z)
-                                        .speed(0.01)
-                                        .range(0.01..=100.0),
-                                );
-                            });
+							// --- 1. borrow models[idx] once --------------------
+							if let Some(idx) = self.selected_model {
+								let m = &mut self.models[idx];
 
-                            if ui.button("Reset scale").clicked() {
-                                self.model_scale = Vector3::new(1.0, 1.0, 1.0);
-                            }
-                        });
+								// Track whether any DragValue changed
+								let mut changed = false;
+
+								ui.horizontal(|ui| {
+									ui.label("X:");
+									changed |= ui
+										.add(egui::DragValue::new(&mut m.scale.x)
+											 .speed(0.01)
+											 .range(0.01..=100.0))
+										.changed();
+								});
+								ui.horizontal(|ui| {
+									ui.label("Y:");
+									changed |= ui
+										.add(egui::DragValue::new(&mut m.scale.y)
+											 .speed(0.01)
+											 .range(0.01..=100.0))
+										.changed();
+								});
+								ui.horizontal(|ui| {
+									ui.label("Z:");
+									changed |= ui
+										.add(egui::DragValue::new(&mut m.scale.z)
+											 .speed(0.01)
+											 .range(0.01..=100.0))
+										.changed();
+								});
+
+								if ui.button("Reset scale").clicked() {
+									m.scale = Vector3::new(1.0, 1.0, 1.0);
+									changed = true;
+								}
+
+								// Invalidate *through the same mutable borrow*.
+								if changed {
+									m.applied_scale = INVALID_SCALE;
+								}
+							} else {
+								ui.label("No model selected");
+							}
+							// --- m is dropped here; safe to touch self again if you need to ---
+						});
 
                         // ────────────── Position Controls ──────────────
                         ui.separator();
                         ui.collapsing("Model position", |ui| {
-                            if ui.button("Float (Z = 0)").clicked() {
-                                self.model_offset = Vector3::zeros();
-                                self.set_base_model(self.base_model.clone().float());
-                            }
+							if let Some(idx) = self.selected_model {
+								let m = &mut self.models[idx];
 
-                            if ui.button("Center").clicked() {
-                                self.model_offset = Vector3::zeros();
-                                self.set_base_model(self.base_model.clone().center());
-                            }
+								let mut changed = false;
 
-                            ui.horizontal(|ui| {
-                                ui.label("X:");
-                                ui.add(egui::DragValue::new(&mut self.model_offset.x).speed(1.0));
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Y:");
-                                ui.add(egui::DragValue::new(&mut self.model_offset.y).speed(1.0));
-                            });
-                            ui.horizontal(|ui| {
-                                ui.label("Z:");
-                                ui.add(egui::DragValue::new(&mut self.model_offset.z).speed(1.0));
-                            });
+								if ui.button("Float (Z = 0)").clicked() {
+									m.offset = Vector3::zeros();
+									m.base = m.base.clone().float();
+									changed = true;
+								}
+								if ui.button("Center").clicked() {
+									m.offset = Vector3::zeros();
+									m.base = m.base.clone().center();
+									changed = true;
+								}
 
-                            if ui.button("Reset position").clicked() {
-                                self.model_offset = Vector3::zeros();
-                            }
-                        });
+								ui.horizontal(|ui| {
+									ui.label("X:");
+									changed |= ui
+										.add(egui::DragValue::new(&mut m.offset.x).speed(1.0))
+										.changed();
+								});
+								ui.horizontal(|ui| {
+									ui.label("Y:");
+									changed |= ui
+										.add(egui::DragValue::new(&mut m.offset.y).speed(1.0))
+										.changed();
+								});
+								ui.horizontal(|ui| {
+									ui.label("Z:");
+									changed |= ui
+										.add(egui::DragValue::new(&mut m.offset.z).speed(1.0))
+										.changed();
+								});
+
+								if ui.button("Reset position").clicked() {
+									m.offset = Vector3::zeros();
+									changed = true;
+								}
+
+								if changed {
+									// Same trick: mark dirty without re-borrowing self.
+									m.applied_offset = Vector3::repeat(f32::NAN);
+								}
+							} else {
+								ui.label("No model selected");
+							}
+						});
 
                         ui.separator();
                         ui.collapsing("Work area (mm)", |ui| {
@@ -790,45 +902,37 @@ impl eframe::App for AluminaApp {
                     let mut guard = self.workpiece_data.lock().unwrap();
                     guard.take()
                 };
-                if let Some(bytes) = workpiece_bytes_opt {
-                    match load_mesh_from_bytes(&bytes) {
-                        Some(mesh) => {
-                            self.set_base_model(mesh.float());
-                            log::info!(
-                                "[alumina] app#{}   workpiece loaded → {} bytes, poly={}",
-                                self.debug_id,
-                                bytes.len(),
-                                self.base_model.polygons.len()
-                            );
-                        }
-                        None => {
-                            log::error!("Could not parse workpiece file – unsupported or corrupt")
-                        }
-                    }
-                }
+                if let Some(bytes)=workpiece_bytes_opt{
+					if let Some(mesh)=load_mesh_from_bytes(&bytes){
+						self.add_model(mesh.float(), "workpiece".into());
+						log::info!("[alumina] workpiece loaded ({} bytes)", bytes.len());
+					} else {
+						log::error!("Could not parse workpiece file");
+					}
+				}
 
                 // ── model ────────────────────────────────────────────────────
                 let model_bytes_opt = {
                     let mut guard = self.model_data.lock().unwrap();
                     guard.take()
                 };
-                if let Some(bytes) = model_bytes_opt {
-                    match load_mesh_from_bytes(&bytes) {
-                        Some(mesh) => {
-                            self.set_base_model(mesh.float());
-                            log::info!(
-                                "[alumina] app#{}   model loaded → {} bytes, poly={}",
-                                self.debug_id,
-                                bytes.len(),
-                                self.base_model.polygons.len()
-                            );
-                        }
-                        None => log::error!("Could not parse model file – unsupported or corrupt"),
-                    }
-                }
+                if let Some(bytes)=model_bytes_opt{
+					if let Some(mesh)=load_mesh_from_bytes(&bytes){
+						let name = "model".to_string();
+						// replace if user had a selection, else add as new model
+						if let Some(sel) = self.selected_model {
+							self.set_selected_base(mesh.float(), name);
+						} else {
+							self.add_model(mesh.float(), name);
+						}
+						log::info!("[alumina] model loaded ({} bytes)", bytes.len());
+					} else {
+						log::error!("Could not parse model file – unsupported or corrupt");
+					}
+				}
 
                 // Apply scaling if the user changed any of the factors -------------
-                self.refresh_model();
+                self.refresh_models();
                 self.refresh_slice();
 
                 // ------------------------------------------------------------------
@@ -944,7 +1048,7 @@ impl eframe::App for AluminaApp {
 								self.design_state.graph.outputs.keys().next()
 							{
 								match design_graph::evaluate(&self.design_state.graph, root_out) {
-									Ok(mesh) => self.set_base_model(mesh.float()),
+									Ok(mesh) => self.add_model(mesh.float(),"graph".into()),
 									Err(e)  => log::error!("Graph eval failed: {e}"),
 								}
 							}
