@@ -4,6 +4,8 @@ Alumina is an integrated CAD/CAM, physics simulation, and motion control solutio
 
 ![Screenshot](doc/screenshot.png)
 
+Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the link.
+
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/9WkD3WFxMC)
 
