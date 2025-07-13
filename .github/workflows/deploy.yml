@@ -14,6 +14,7 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo install trunk
+          cargo install wasm-opt
 
       - name: Build
         run: trunk build --release --public-url /alumina-ui/
