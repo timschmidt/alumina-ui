@@ -19,7 +19,7 @@ command_arguments = [
 set -euo pipefail
 
 # Run Binaryen optimiser
-wasm-opt -Oz --vacuum --strip-debug --enable-bulk-memory-opt --enable-nontrapping-float-to-int -o "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm" \
+wasm-opt -Oz --vacuum --strip-debug --enable-bulk-memory --enable-nontrapping-float-to-int -o "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm" \
          "$TRUNK_STAGING_DIR/alumina-ui_bg.wasm"
 
 # Strip any leftover custom sections
