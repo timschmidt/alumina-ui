@@ -1043,13 +1043,15 @@ impl eframe::App for AluminaApp {
 							self.design_state = GraphEditorState::default();
 						}
 						if ui.button("Apply to model").clicked() {
-							// Find any selected output; fall back to the first node’s first out-port
-							if let Some(root_out) =
-								self.design_state.graph.outputs.keys().next()
-							{
-								match design_graph::evaluate(&self.design_state.graph, root_out) {
-									Ok(mesh) => self.add_model(mesh.float(),"graph".into()),
-									Err(e)  => log::error!("Graph eval failed: {e}"),
+							let roots = design_graph::graph_roots(&self.design_state.graph);
+							log::warn!("roots: {:#?}", roots);
+							if roots.is_empty() {
+								log::warn!("Apply to model: No root nodes found in the graph.");
+							}
+							for root_out in roots {
+								match design_graph::evaluate(&self.design_state.graph, root_out){
+									Ok(mesh)=>self.add_model(mesh.float(),"graph".into()),
+									Err(e)=>log::error!("Graph eval failed for root {:?}: {e}", root_out),
 								}
 							}
 						}

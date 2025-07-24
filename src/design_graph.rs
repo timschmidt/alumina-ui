@@ -33,7 +33,7 @@ impl Default for DValue {
 }
 
 /// A node “template” = what appears in the “add node” pop-up.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Template {
     // 3-D primitives
     Cube,
@@ -61,25 +61,23 @@ impl Default for Template {
 }
 
 // Helper: list “root” output sockets of the graph (no consumer attached).
-pub fn graph_roots(graph: &GraphT) -> Vec<OutputId> {
+pub fn graph_roots(graph:&GraphT)->Vec<OutputId>{
     use std::collections::HashSet;
-    let mut used = HashSet::<OutputId>::new();
-    for input_id in graph.inputs.keys() {
-        if let Some(src) = graph.connection(input_id) {
-            used.insert(src);
+    let mut used=HashSet::<OutputId>::new();
+    for input_id in graph.inputs.keys(){
+        // graph.connections returns a Vec of all OutputIds connected to this input.
+        // This is more robust than graph.connection which only works for single connections.
+        for src_id in graph.connections(input_id) {
+            used.insert(src_id);
         }
     }
-    graph
-        .outputs
-        .keys()
-        .filter(|oid| !used.contains(oid))
-        .collect()
+    graph.outputs.keys().filter(|oid|!used.contains(oid)).collect()
 }
 
 #[derive(Default)]
 pub struct UserState;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct NodeData {
     pub template: Template,
 }
@@ -185,7 +183,7 @@ impl NodeTemplateTrait for Template {
                 true,
             );
         };
-	let sketch_in = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
+		let sketch_in = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
             g.add_input_param(
                 id,
                 name.into(),
@@ -352,17 +350,21 @@ pub fn evaluate(graph: &GraphT, root: OutputId) -> anyhow::Result<Mesh<()>> {
 fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<DValue> {
     if let Some(v) = cache.get(&out) { return Ok(v.clone()); }
     let node_id = graph[out].node;
+    log::warn!("node_id: {:#?}", node_id);
     let node    = &graph[node_id];
+    log::warn!("node: {:#?}", node);
 
     // Helper to fetch (recursively) an input
     let mut get = |name: &str| -> anyhow::Result<DValue> {
-        let in_id = node.get_input(name)?;
-        if let Some(src) = graph.connection(in_id) {
-            eval_rec(graph, src, cache)
-        } else {
-            Ok(graph[in_id].value.clone())
-        }
-    };
+		let in_id = node.get_input(name)?;
+		// Use `connections` (plural) and get the first connected output.
+		if let Some(src) = graph.connections(in_id).first() {
+			// `src` is a `&OutputId`, so we dereference it.
+			eval_rec(graph, *src, cache)
+		} else {
+			Ok(graph[in_id].value.clone())
+		}
+	};
 
     use Template::*;
     let value = match node.user_data.template {
@@ -401,7 +403,10 @@ fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<
         Subtract => {
             let a = get("A")?.mesh()?;
             let b = get("B")?.mesh()?;
+            log::warn!("a: {:#?}", a);
+            log::warn!("b: {:#?}", b);
             DValue::Mesh(a.difference(&b))
+            //DValue::Mesh(Mesh::new())
         }
         Intersect => {
             let a = get("A")?.mesh()?;
@@ -437,6 +442,8 @@ fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<
     };
 
     cache.insert(out, value.clone());
+    log::warn!("value: {:#?}", value);
+    log::warn!("cache: {:#?}", cache);
     Ok(value)
 }
 
