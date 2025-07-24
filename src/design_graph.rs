@@ -156,7 +156,7 @@ impl NodeTemplateTrait for Template {
         match self{
             /* sketch */
             Square=>"Square".into(), Rectangle=>"Rectangle".into(), Circle=>"Circle".into(),
-            RoundedRectangle=>"Rounded Rect".into(), Ellipse=>"Ellipse".into(), RegularNgon=>"Regular n‑gon".into(),
+            RoundedRectangle=>"Rounded Rect".into(), Ellipse=>"Ellipse".into(), RegularNgon=>"Regular n-gon".into(),
             RightTriangle=>"Right triangle".into(), Trapezoid=>"Trapezoid".into(), Star=>"Star".into(),
             TeardropSketch=>"Teardrop (2D)".into(), EggSketch=>"Egg (2D)".into(), Squircle=>"Squircle".into(),
             Keyhole=>"Keyhole".into(), Reuleaux=>"Reuleaux".into(), Ring=>"Ring".into(),
