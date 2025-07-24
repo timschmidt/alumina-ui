@@ -581,7 +581,7 @@ impl eframe::App for AluminaApp {
                                 {
                                     self.selected_model = Some(i);
                                 }
-                                if ui.button("✕").clicked() {
+                                if ui.button("x").clicked() {
                                     remove = Some(i);
                                 }
                             });
