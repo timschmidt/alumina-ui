@@ -9,7 +9,7 @@ egui = { version = "0.29.1", default-features = false, features = ["default_font
 wasm-bindgen = { version = "0.2", default-features = false }
 wasm-bindgen-futures = { version = "0.4", default-features = false }
 console_error_panic_hook = { version = "0.1", default-features = false }
-csgrs = { version="0.20.1", default-features = false, features = ["delaunay", "f32", "stl-io", "dxf-io", "amf-io", "ply-io", "obj-io"] }
+csgrs = { version="0.20.1", default-features = false, features = ["delaunay", "f32", "chull-io", "sdf", "truetype-text", "stl-io", "dxf-io", "amf-io", "ply-io", "obj-io"] }
 uuid = { version = "1.17", default-features = false, features = ["js", "v4"] }
 glow = { version = "0.14", default-features = false }
 bytemuck = { version = "1.23.1", default-features = false }

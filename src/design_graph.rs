@@ -1,8 +1,7 @@
 use egui_node_graph2::*;
-use csgrs::{mesh::Mesh, sketch::Sketch, traits::CSG};
-use nalgebra::Vector3;
+use csgrs::{mesh::Mesh, sketch::Sketch, traits::CSG, mesh::plane::Plane};
+use nalgebra::{Vector3, Point3, Matrix4};
 use egui::{self, DragValue};
-
 #[derive(Clone, Debug)]
 pub struct EmptyUserResponse;
 
@@ -34,24 +33,40 @@ impl Default for DValue {
 
 /// A node “template” = what appears in the “add node” pop-up.
 #[derive(Copy, Clone, Debug)]
-pub enum Template {
-    // 3-D primitives
-    Cube,
-    Sphere,
-    Cylinder,
-    // 2-D primitives
-    Rectangle,
-    Circle,
-    // Booleans (mesh ↔ mesh  OR sketch ↔ sketch)
-    Union,
-    Subtract,
-    Intersect,
-    // transforms
-    Translate,
-    Rotate,
-    Scale,
-    // 2-D → 3-D
-    Extrude,
+pub enum Template{
+    /* ---- Sketch primitives ---- */
+    Square, Rectangle, Circle, RoundedRectangle, Ellipse, RegularNgon, RightTriangle,
+    Trapezoid, Star, TeardropSketch, EggSketch, Squircle, Keyhole, Reuleaux,
+    Ring, PieSlice, Supershape, CircleWithKeyway, CircleWithFlat, CircleWithTwoFlats,
+    Heart, Crescent, AirfoilNaca4,
+
+    /* ---- Mesh primitives ---- */
+    Cube, Cuboid, Sphere, Cylinder, Frustum, Octahedron, Icosahedron,
+    Torus, EggMesh, TeardropMesh, TeardropCylinder, Ellipsoid, Arrow,
+
+    /* ---- Booleans ---- */
+    MeshUnion, MeshSubtract, MeshIntersect,
+    SketchUnion, SketchSubtract, SketchIntersect,
+
+    /* ---- Transforms (mesh) ---- */
+    TranslateMesh, RotateMesh, ScaleMesh, MirrorMesh, CenterMesh, FloatMesh, InverseMesh,
+    DistributeArcMesh, DistributeLinearMesh, DistributeGridMesh,
+
+    /* ---- Transforms (sketch) ---- */
+    TranslateSketch, RotateSketch, ScaleSketch, MirrorSketch, CenterSketch, FloatSketch, InverseSketch,
+    DistributeArcSketch, DistributeLinearSketch, DistributeGridSketch,
+
+    /* ---- 2D -> 3D ---- */
+    Extrude, ExtrudeVector, Revolve, Loft, Sweep,
+
+    /* ---- Mesh <-> Sketch helpers ---- */
+    Flatten, Slice,
+
+    /* ---- Field / lattice ops ---- */
+    Gyroid, SchwarzP, SchwarzD,
+
+    /* ---- Text ---- */
+    //Text,
 }
 
 impl Default for Template {
@@ -102,6 +117,32 @@ impl DataTypeTrait<UserState> for DType {
     }
 }
 
+/* ------------------------------------------------------------------------- */
+/*  Builder helpers                                                          */
+/* ------------------------------------------------------------------------- */
+fn scalar_in(g:&mut Graph<NodeData,DType,DValue>,id:NodeId,name:&str,def:f32){
+    g.add_input_param(id,name.into(),DType::Scalar,DValue::Scalar(def),
+        InputParamKind::ConnectionOrConstant,true);
+}
+fn vec3_in(g:&mut Graph<NodeData,DType,DValue>,id:NodeId,name:&str,def:Vector3<f32>){
+    g.add_input_param(id,name.into(),DType::Vec3,DValue::Vec3(def),
+        InputParamKind::ConnectionOrConstant,true);
+}
+fn mesh_in(g:&mut Graph<NodeData,DType,DValue>,id:NodeId,name:&str){
+    g.add_input_param(id,name.into(),DType::Mesh,DValue::default(),
+        InputParamKind::ConnectionOnly,true);
+}
+fn sketch_in(g:&mut Graph<NodeData,DType,DValue>,id:NodeId,name:&str){
+    g.add_input_param(id,name.into(),DType::Sketch,DValue::default(),
+        InputParamKind::ConnectionOnly,true);
+}
+fn mesh_out(g:&mut Graph<NodeData,DType,DValue>,id:NodeId,name:&str){
+    g.add_output_param(id,name.into(),DType::Mesh);
+}
+fn sketch_out(g:&mut Graph<NodeData,DType,DValue>,id:NodeId,name:&str){
+    g.add_output_param(id,name.into(),DType::Sketch);
+}
+
 /// Node-template plumbing ----------------------------------------------------
 impl NodeTemplateTrait for Template {
     type NodeData = NodeData;
@@ -112,163 +153,201 @@ impl NodeTemplateTrait for Template {
 
     fn node_finder_label(&self, _: &mut UserState) -> std::borrow::Cow<'_, str> {
         use Template::*;
-        match self {
-            Cube        => "Cube".into(),
-            Sphere      => "Sphere".into(),
-            Cylinder    => "Cylinder".into(),
-            Rectangle   => "Rectangle".into(),
-            Circle      => "Circle".into(),
-            Union       => "Union".into(),
-            Subtract    => "Subtract".into(),
-            Intersect   => "Intersect".into(),
-            Translate   => "Translate".into(),
-            Rotate      => "Rotate".into(),
-            Scale       => "Scale".into(),
-            Extrude     => "Extrude".into(),
+        match self{
+            /* sketch */
+            Square=>"Square".into(), Rectangle=>"Rectangle".into(), Circle=>"Circle".into(),
+            RoundedRectangle=>"Rounded Rect".into(), Ellipse=>"Ellipse".into(), RegularNgon=>"Regular n‑gon".into(),
+            RightTriangle=>"Right triangle".into(), Trapezoid=>"Trapezoid".into(), Star=>"Star".into(),
+            TeardropSketch=>"Teardrop (2D)".into(), EggSketch=>"Egg (2D)".into(), Squircle=>"Squircle".into(),
+            Keyhole=>"Keyhole".into(), Reuleaux=>"Reuleaux".into(), Ring=>"Ring".into(),
+            PieSlice=>"Pie slice".into(), Supershape=>"Supershape".into(), CircleWithKeyway=>"Circle keyway".into(),
+            CircleWithFlat=>"Circle flat".into(), CircleWithTwoFlats=>"Circle two flats".into(), Heart=>"Heart".into(),
+            Crescent=>"Crescent".into(), AirfoilNaca4=>"Airfoil NACA4".into(),
+
+            /* mesh */
+            Cube=>"Cube".into(), Cuboid=>"Cuboid".into(), Sphere=>"Sphere".into(),
+            Cylinder=>"Cylinder".into(), Frustum=>"Frustum".into(), Octahedron=>"Octahedron".into(),
+            Icosahedron=>"Icosahedron".into(), Torus=>"Torus".into(), EggMesh=>"Egg (3D)".into(),
+            TeardropMesh=>"Teardrop (3D)".into(), TeardropCylinder=>"Teardrop cyl".into(), Ellipsoid=>"Ellipsoid".into(),
+            Arrow=>"Arrow".into(),
+
+            /* booleans */
+            MeshUnion=>"Mesh Union".into(), MeshSubtract=>"Mesh Subtract".into(), MeshIntersect=>"Mesh Intersect".into(),
+            SketchUnion=>"Sketch Union".into(), SketchSubtract=>"Sketch Subtract".into(), SketchIntersect=>"Sketch Intersect".into(),
+
+            /* transforms mesh */
+            TranslateMesh=>"Translate Mesh".into(), RotateMesh=>"Rotate Mesh".into(), ScaleMesh=>"Scale Mesh".into(),
+            MirrorMesh=>"Mirror Mesh".into(), CenterMesh=>"Center Mesh".into(), FloatMesh=>"Float Mesh".into(),
+            InverseMesh=>"Inverse Mesh".into(), DistributeArcMesh=>"Distribute Arc (Mesh)".into(),
+            DistributeLinearMesh=>"Distribute Linear (Mesh)".into(), DistributeGridMesh=>"Distribute Grid (Mesh)".into(),
+
+            /* transforms sketch */
+            TranslateSketch=>"Translate Sketch".into(), RotateSketch=>"Rotate Sketch".into(), ScaleSketch=>"Scale Sketch".into(),
+            MirrorSketch=>"Mirror Sketch".into(), CenterSketch=>"Center Sketch".into(), FloatSketch=>"Float Sketch".into(),
+            InverseSketch=>"Inverse Sketch".into(), DistributeArcSketch=>"Distribute Arc (Sketch)".into(),
+            DistributeLinearSketch=>"Distribute Linear (Sketch)".into(), DistributeGridSketch=>"Distribute Grid (Sketch)".into(),
+
+            /* 2D -> 3D */
+            Extrude=>"Extrude".into(), ExtrudeVector=>"Extrude Vector".into(),
+            Revolve=>"Revolve".into(), Loft=>"Loft".into(), Sweep=>"Sweep".into(),
+
+            /* mesh<->sketch */
+            Flatten=>"Flatten".into(), Slice=>"Slice".into(),
+
+            Gyroid=>"Gyroid".into(), SchwarzP=>"Schwarz P".into(), SchwarzD=>"Schwarz D".into(),
+            //Text=>"Text".into(),
         }
     }
-
-    fn node_finder_categories(&self, _: &mut UserState) -> Vec<Self::CategoryType> {
+    fn node_finder_categories(&self,_:&mut UserState)->Vec<Self::CategoryType>{
         use Template::*;
-        match self {
-            Cube | Sphere | Cylinder => vec!["3-D / Mesh"],
-            Rectangle | Circle => vec!["2-D / Sketch"],
-            Union | Subtract | Intersect => vec!["Boolean"],
-            Translate | Rotate | Scale => vec!["Transform"],
-            Extrude => vec!["2-D -> 3-D"],
+        match self{
+            Square|Rectangle|Circle|RoundedRectangle|Ellipse|RegularNgon|RightTriangle|Trapezoid|Star|
+            TeardropSketch|EggSketch|Squircle|Keyhole|Reuleaux|Ring|PieSlice|Supershape|CircleWithKeyway|
+            CircleWithFlat|CircleWithTwoFlats|Heart|Crescent|AirfoilNaca4 => vec!["2D / Sketch"],
+            //CircleWithFlat|CircleWithTwoFlats|Heart|Crescent|AirfoilNaca4|Text => vec!["2D / Sketch"],
+
+            Cube|Cuboid|Sphere|Cylinder|Frustum|Octahedron|Icosahedron|Torus|EggMesh|TeardropMesh|
+            TeardropCylinder|Ellipsoid|Arrow => vec!["3D / Mesh"],
+
+            MeshUnion|MeshSubtract|MeshIntersect|SketchUnion|SketchSubtract|SketchIntersect => vec!["Boolean"],
+
+            TranslateMesh|RotateMesh|ScaleMesh|MirrorMesh|CenterMesh|FloatMesh|InverseMesh|
+            DistributeArcMesh|DistributeLinearMesh|DistributeGridMesh|
+            TranslateSketch|RotateSketch|ScaleSketch|MirrorSketch|CenterSketch|FloatSketch|InverseSketch|
+            DistributeArcSketch|DistributeLinearSketch|DistributeGridSketch => vec!["Transform"],
+
+            Extrude|ExtrudeVector|Revolve|Loft|Sweep => vec!["2D -> 3D"],
+            Flatten|Slice => vec!["Mesh/Sketch"],
+            Gyroid|SchwarzP|SchwarzD => vec!["Lattice"],
         }
     }
+    fn node_graph_label(&self,u:&mut UserState)->String{self.node_finder_label(u).into()}
+    fn user_data(&self,_:&mut UserState)->Self::NodeData{NodeData{template:*self}}
 
-    fn node_graph_label(&self, u: &mut UserState) -> String {
-        self.node_finder_label(u).into()
-    }
-
-    fn user_data(&self, _: &mut UserState) -> Self::NodeData {
-        NodeData { template: *self }
-    }
-
-    fn build_node(
-        &self,
-        g: &mut Graph<NodeData, DType, DValue>,
-        _: &mut UserState,
-        id: NodeId,
-    ) {
-        let scalar_in = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
-            g.add_input_param(
-                id,
-                name.into(),
-                DType::Scalar,
-                DValue::Scalar(1.0),
-                InputParamKind::ConnectionOrConstant,
-                true,
-            );
-        };
-        let vec3_in   = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
-            g.add_input_param(
-                id,
-                name.into(),
-                DType::Vec3,
-                DValue::Vec3(Vector3::zeros()),
-                InputParamKind::ConnectionOrConstant,
-                true,
-            );
-        };
-        let mesh_in = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
-             g.add_input_param(
-                id,
-                name.into(),
-                DType::Mesh,
-                DValue::default(),
-                InputParamKind::ConnectionOnly,
-                true,
-            );
-        };
-		let sketch_in = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
-            g.add_input_param(
-                id,
-                name.into(),
-                DType::Sketch,
-                DValue::default(),
-                InputParamKind::ConnectionOnly,
-                true,
-            );
-        };
-        let mesh_out = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
-            g.add_output_param(id, name.into(), DType::Mesh);
-        };
-        let sketch_out = |g: &mut Graph<NodeData, DType, DValue>, name: &str| {
-            g.add_output_param(id, name.into(), DType::Sketch);
-        };
-
-        //—-- build socket layout -------------------------------------------
+    fn build_node(&self,g:&mut Graph<NodeData,DType,DValue>,_:&mut UserState,id:NodeId){
         use Template::*;
-        match self {
-            // 3-D
-            Cube => {
-                scalar_in(g, "size");
-                mesh_out(g, "out");
-            }
-            Sphere => {
-                scalar_in(g, "radius");
-                mesh_out(g, "out");
-            }
-            Cylinder => {
-                scalar_in(g, "radius");
-                scalar_in(g, "height");
-                mesh_out(g, "out");
-            }
-            // 2-D
-            Rectangle => {
-                scalar_in(g, "width");
-                scalar_in(g, "height");
-                sketch_out(g, "out");
-            }
-            Circle => {
-                scalar_in(g, "radius");
-                sketch_out(g, "out");
-            }
-            // Boolean (works for both kinds, use same DType for A/B)
-            Union | Subtract | Intersect => {
-                mesh_in(g, "A");
-                mesh_in(g, "B");
-                mesh_out(g, "out");
-            }
-            // Transforms
-            Translate => {
-                mesh_in(g, "in");
-                vec3_in(g, "offset");
-                mesh_out(g, "out");
-            }
-            Rotate => {
-                mesh_in(g, "in");
-                vec3_in(g, "axis");
-                scalar_in(g, "angle (rad)");
-                mesh_out(g, "out");
-            }
-            Scale => {
-                mesh_in(g, "in");
-                vec3_in(g, "factors");
-                mesh_out(g, "out");
-            }
-            // 2-D → 3-D
-            Extrude => {
-                sketch_in(g, "profile");
-                scalar_in(g, "height");
-                mesh_out(g, "out");
-            }
+        match self{
+
+            /* ---- sketch primitives ---- */
+            Square => { scalar_in(g,id,"width",1.0); sketch_out(g,id,"out"); }
+            ,Rectangle => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"height",1.0); sketch_out(g,id,"out"); }
+            ,Circle => { scalar_in(g,id,"radius",1.0); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,RoundedRectangle => { scalar_in(g,id,"width",2.0); scalar_in(g,id,"height",1.0); scalar_in(g,id,"corner_r",0.2); scalar_in(g,id,"corner_segments",8.0); sketch_out(g,id,"out"); }
+            ,Ellipse => { scalar_in(g,id,"width",2.0); scalar_in(g,id,"height",1.0); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,RegularNgon => { scalar_in(g,id,"sides",6.0); scalar_in(g,id,"radius",1.0); sketch_out(g,id,"out"); }
+            ,RightTriangle => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"height",1.0); sketch_out(g,id,"out"); }
+            ,Trapezoid => { scalar_in(g,id,"top_width",1.0); scalar_in(g,id,"bottom_width",2.0); scalar_in(g,id,"height",1.0); scalar_in(g,id,"top_offset",0.0); sketch_out(g,id,"out"); }
+            ,Star => { scalar_in(g,id,"points",5.0); scalar_in(g,id,"outer_r",1.0); scalar_in(g,id,"inner_r",0.5); sketch_out(g,id,"out"); }
+            ,TeardropSketch => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"height",1.5); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,EggSketch => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"length",2.0); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,Squircle => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"height",1.0); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,Keyhole => { scalar_in(g,id,"circle_r",0.5); scalar_in(g,id,"handle_w",0.5); scalar_in(g,id,"handle_h",1.0); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,Reuleaux => { scalar_in(g,id,"sides",3.0); scalar_in(g,id,"radius",1.0); scalar_in(g,id,"arc_segments",16.0); sketch_out(g,id,"out"); }
+            ,Ring => { scalar_in(g,id,"id",1.0); scalar_in(g,id,"thickness",0.2); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,PieSlice => { scalar_in(g,id,"radius",1.0); scalar_in(g,id,"start_deg",0.0); scalar_in(g,id,"end_deg",90.0); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,Supershape => { scalar_in(g,id,"a",1.0); scalar_in(g,id,"b",1.0); scalar_in(g,id,"m",5.0);
+                              scalar_in(g,id,"n1",1.0); scalar_in(g,id,"n2",1.0); scalar_in(g,id,"n3",1.0);
+                              scalar_in(g,id,"segments",128.0); sketch_out(g,id,"out"); }
+            ,CircleWithKeyway => { scalar_in(g,id,"radius",1.0); scalar_in(g,id,"segments",64.0); scalar_in(g,id,"key_w",0.2); scalar_in(g,id,"key_d",0.2); sketch_out(g,id,"out"); }
+            ,CircleWithFlat => { scalar_in(g,id,"radius",1.0); scalar_in(g,id,"segments",64.0); scalar_in(g,id,"flat_dist",0.5); sketch_out(g,id,"out"); }
+            ,CircleWithTwoFlats => { scalar_in(g,id,"radius",1.0); scalar_in(g,id,"segments",64.0); scalar_in(g,id,"flat_dist",0.5); sketch_out(g,id,"out"); }
+            ,Heart => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"height",1.0); scalar_in(g,id,"segments",64.0); sketch_out(g,id,"out"); }
+            ,Crescent => { scalar_in(g,id,"outer_r",1.0); scalar_in(g,id,"inner_r",0.5); scalar_in(g,id,"offset",0.3); scalar_in(g,id,"segments",32.0); sketch_out(g,id,"out"); }
+            ,AirfoilNaca4 => { scalar_in(g,id,"max_camber",2.0); scalar_in(g,id,"camber_pos",4.0);
+                               scalar_in(g,id,"thickness",12.0); scalar_in(g,id,"chord",1.0); scalar_in(g,id,"samples",64.0);
+                               sketch_out(g,id,"out"); }
+
+            /* ---- mesh primitives ---- */
+            Cube => { scalar_in(g,id,"size",1.0); mesh_out(g,id,"out"); }
+            ,Cuboid => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"length",2.0); scalar_in(g,id,"height",1.0); mesh_out(g,id,"out"); }
+            ,Sphere => { scalar_in(g,id,"radius",1.0); scalar_in(g,id,"segments",24.0); scalar_in(g,id,"stacks",12.0); mesh_out(g,id,"out"); }
+            ,Cylinder => { scalar_in(g,id,"radius",1.0); scalar_in(g,id,"height",1.0); scalar_in(g,id,"segments",24.0); mesh_out(g,id,"out"); }
+            ,Frustum => { scalar_in(g,id,"r1",1.0); scalar_in(g,id,"r2",0.5); scalar_in(g,id,"height",2.0); scalar_in(g,id,"segments",24.0); mesh_out(g,id,"out"); }
+            ,Octahedron => { scalar_in(g,id,"radius",1.0); mesh_out(g,id,"out"); }
+            ,Icosahedron => { scalar_in(g,id,"radius",1.0); mesh_out(g,id,"out"); }
+            ,Torus => { scalar_in(g,id,"major_r",2.0); scalar_in(g,id,"minor_r",0.5); scalar_in(g,id,"segments_major",32.0); scalar_in(g,id,"segments_minor",16.0); mesh_out(g,id,"out"); }
+            ,EggMesh => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"length",2.0); scalar_in(g,id,"rev_segments",16.0); scalar_in(g,id,"outline_segments",32.0); mesh_out(g,id,"out"); }
+            ,TeardropMesh => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"height",2.0); scalar_in(g,id,"rev_segments",16.0); scalar_in(g,id,"shape_segments",32.0); mesh_out(g,id,"out"); }
+            ,TeardropCylinder => { scalar_in(g,id,"width",1.0); scalar_in(g,id,"length",2.0); scalar_in(g,id,"height",1.0); scalar_in(g,id,"shape_segments",32.0); mesh_out(g,id,"out"); }
+            ,Ellipsoid => { scalar_in(g,id,"rx",1.0); scalar_in(g,id,"ry",1.0); scalar_in(g,id,"rz",2.0); scalar_in(g,id,"segments",24.0); scalar_in(g,id,"stacks",12.0); mesh_out(g,id,"out"); }
+            ,Arrow => { vec3_in(g,id,"start",Vector3::zeros()); vec3_in(g,id,"direction",Vector3::new(0.0,0.0,2.0)); scalar_in(g,id,"segments",16.0); scalar_in(g,id,"orientation",1.0); mesh_out(g,id,"out"); }
+
+            /* ---- booleans ---- */
+            MeshUnion|MeshSubtract|MeshIntersect => { mesh_in(g,id,"A"); mesh_in(g,id,"B"); mesh_out(g,id,"out"); }
+            ,SketchUnion|SketchSubtract|SketchIntersect => { sketch_in(g,id,"A"); sketch_in(g,id,"B"); sketch_out(g,id,"out"); }
+
+            /* ---- mesh transforms ---- */
+            TranslateMesh => { mesh_in(g,id,"in"); vec3_in(g,id,"offset",Vector3::zeros()); mesh_out(g,id,"out"); }
+            ,RotateMesh => { mesh_in(g,id,"in"); vec3_in(g,id,"axis",Vector3::z()); scalar_in(g,id,"angle_rad",0.0); mesh_out(g,id,"out"); }
+            ,ScaleMesh => { mesh_in(g,id,"in"); vec3_in(g,id,"factors",Vector3::new(1.0,1.0,1.0)); mesh_out(g,id,"out"); }
+            ,MirrorMesh => { mesh_in(g,id,"in"); vec3_in(g,id,"plane_normal",Vector3::x()); scalar_in(g,id,"plane_w",0.0); mesh_out(g,id,"out"); }
+            ,CenterMesh|FloatMesh|InverseMesh => { mesh_in(g,id,"in"); mesh_out(g,id,"out"); }
+            ,DistributeArcMesh => { mesh_in(g,id,"in"); scalar_in(g,id,"count",3.0); scalar_in(g,id,"radius",5.0); scalar_in(g,id,"start_deg",0.0); scalar_in(g,id,"end_deg",180.0); mesh_out(g,id,"out"); }
+            ,DistributeLinearMesh => { mesh_in(g,id,"in"); scalar_in(g,id,"count",3.0); vec3_in(g,id,"dir",Vector3::x()); scalar_in(g,id,"spacing",2.0); mesh_out(g,id,"out"); }
+            ,DistributeGridMesh => { mesh_in(g,id,"in"); scalar_in(g,id,"rows",2.0); scalar_in(g,id,"cols",3.0); scalar_in(g,id,"dx",2.0); scalar_in(g,id,"dy",2.0); mesh_out(g,id,"out"); }
+
+            /* ---- sketch transforms ---- */
+            TranslateSketch => { sketch_in(g,id,"in"); vec3_in(g,id,"offset",Vector3::zeros()); sketch_out(g,id,"out"); }
+            ,RotateSketch => { sketch_in(g,id,"in"); vec3_in(g,id,"axis",Vector3::z()); scalar_in(g,id,"angle_rad",0.0); sketch_out(g,id,"out"); }
+            ,ScaleSketch => { sketch_in(g,id,"in"); vec3_in(g,id,"factors",Vector3::new(1.0,1.0,1.0)); sketch_out(g,id,"out"); }
+            ,MirrorSketch => { sketch_in(g,id,"in"); vec3_in(g,id,"plane_normal",Vector3::x()); scalar_in(g,id,"plane_w",0.0); sketch_out(g,id,"out"); }
+            ,CenterSketch|FloatSketch|InverseSketch => { sketch_in(g,id,"in"); sketch_out(g,id,"out"); }
+            ,DistributeArcSketch => { sketch_in(g,id,"in"); scalar_in(g,id,"count",3.0); scalar_in(g,id,"radius",5.0); scalar_in(g,id,"start_deg",0.0); scalar_in(g,id,"end_deg",180.0); sketch_out(g,id,"out"); }
+            ,DistributeLinearSketch => { sketch_in(g,id,"in"); scalar_in(g,id,"count",3.0); vec3_in(g,id,"dir",Vector3::x()); scalar_in(g,id,"spacing",2.0); sketch_out(g,id,"out"); }
+            ,DistributeGridSketch => { sketch_in(g,id,"in"); scalar_in(g,id,"rows",2.0); scalar_in(g,id,"cols",3.0); scalar_in(g,id,"dx",2.0); scalar_in(g,id,"dy",2.0); sketch_out(g,id,"out"); }
+
+            /* ---- 2D -> 3D ---- */
+            Extrude => { sketch_in(g,id,"profile"); scalar_in(g,id,"height",1.0); mesh_out(g,id,"out"); }
+            ,ExtrudeVector => { sketch_in(g,id,"profile"); vec3_in(g,id,"direction",Vector3::new(0.0,0.0,1.0)); mesh_out(g,id,"out"); }
+            ,Revolve => { sketch_in(g,id,"profile"); scalar_in(g,id,"angle_deg",360.0); scalar_in(g,id,"segments",16.0); mesh_out(g,id,"out"); }
+            ,Loft => { sketch_in(g,id,"bottom"); sketch_in(g,id,"top"); scalar_in(g,id,"caps",1.0); mesh_out(g,id,"out"); }
+            ,Sweep => { sketch_in(g,id,"profile"); vec3_in(g,id,"p0",Vector3::new(0.0,0.0,0.0)); vec3_in(g,id,"p1",Vector3::new(0.0,0.0,5.0)); mesh_out(g,id,"out"); }
+
+            /* mesh<->sketch */
+            Flatten => { mesh_in(g,id,"in"); sketch_out(g,id,"out"); }
+            ,Slice => { mesh_in(g,id,"in"); vec3_in(g,id,"plane_normal",Vector3::z()); scalar_in(g,id,"plane_w",0.0); sketch_out(g,id,"out"); }
+
+            Gyroid|SchwarzP|SchwarzD => { mesh_in(g,id,"in"); scalar_in(g,id,"resolution",32.0); scalar_in(g,id,"period",10.0); scalar_in(g,id,"iso_value",0.0); mesh_out(g,id,"out"); }
+
+            //Text => { /* minimal text node: size only, static font & text string */
+            //    // you can later replace with user-provided bytes
+            //    scalar_in(g,id,"size",20.0);
+            //    sketch_out(g,id,"out");
+            //}
         }
     }
 }
 
 /// Tell egui-node-graph which templates exist
 pub struct AllTemplates;
-impl NodeTemplateIter for AllTemplates {
-    type Item = Template;
-    fn all_kinds(&self) -> Vec<Self::Item> {
+impl NodeTemplateIter for AllTemplates{
+    type Item=Template;
+    fn all_kinds(&self)->Vec<Self::Item>{
         use Template::*;
         vec![
-            Cube, Sphere, Cylinder, Rectangle, Circle, Union, Subtract, Intersect, Translate,
-            Rotate, Scale, Extrude,
+            /* sketch */
+            Square,Rectangle,Circle,RoundedRectangle,Ellipse,RegularNgon,RightTriangle,Trapezoid,
+            Star,TeardropSketch,EggSketch,Squircle,Keyhole,Reuleaux,Ring,PieSlice,Supershape,
+            CircleWithKeyway,CircleWithFlat,CircleWithTwoFlats,Heart,Crescent,AirfoilNaca4,
+            //Text,
+
+            /* mesh */
+            Cube,Cuboid,Sphere,Cylinder,Frustum,Octahedron,Icosahedron,Torus,EggMesh,TeardropMesh,
+            TeardropCylinder,Ellipsoid,Arrow,
+
+            /* booleans */
+            MeshUnion,MeshSubtract,MeshIntersect,SketchUnion,SketchSubtract,SketchIntersect,
+
+            /* transforms */
+            TranslateMesh,RotateMesh,ScaleMesh,MirrorMesh,CenterMesh,FloatMesh,InverseMesh,
+            DistributeArcMesh,DistributeLinearMesh,DistributeGridMesh,
+            TranslateSketch,RotateSketch,ScaleSketch,MirrorSketch,CenterSketch,FloatSketch,InverseSketch,
+            DistributeArcSketch,DistributeLinearSketch,DistributeGridSketch,
+
+            /* 2D -> 3D */
+            Extrude,ExtrudeVector,Revolve,Loft,Sweep,
+            Flatten,Slice,
+            Gyroid,SchwarzP,SchwarzD,
         ]
     }
 }
@@ -347,6 +426,9 @@ pub fn evaluate(graph: &GraphT, root: OutputId) -> anyhow::Result<Mesh<()>> {
     }
 }
 
+fn as_usize(x:f32)->usize{ if x<=0.0 {0} else {x.round() as usize} }
+fn as_bool(x:f32)->bool{ x.abs()>std::f32::EPSILON }
+
 fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<DValue> {
     if let Some(v) = cache.get(&out) { return Ok(v.clone()); }
     let node_id = graph[out].node;
@@ -367,78 +449,107 @@ fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<
 	};
 
     use Template::*;
-    let value = match node.user_data.template {
-        // 3-D primitives ----------------------------------------------------
-        Cube => {
-            let size = get("size")?.scalar()?;
-            DValue::Mesh(Mesh::cube(size.into(), None))
-        }
-        Sphere => {
-            let r = get("radius")?.scalar()?;
-            DValue::Mesh(Mesh::sphere(r.into(), 24, 24, None))
-        }
-        Cylinder => {
-            let r = get("radius")?.scalar()?;
-            let h = get("height")?.scalar()?;
-            DValue::Mesh(Mesh::cylinder(r.into(), h.into(), 24, None))
-        }
+    let value = match node.user_data.template{
 
-        // 2-D primitives ----------------------------------------------------
-        Rectangle => {
-            let w = get("width")?.scalar()?;
-            let h = get("height")?.scalar()?;
-            DValue::Sketch(Sketch::rectangle(w.into(), h.into(), None))
-        }
-        Circle => {
-            let r = get("radius")?.scalar()?;
-            DValue::Sketch(Sketch::circle(r.into(), 64, None))
-        }
+        /* ---- sketch primitives ---- */
+        Square => { let w=get("width")?.scalar()?; DValue::Sketch(Sketch::square(w.into(),None)) }
+        ,Rectangle => { let w=get("width")?.scalar()?; let h=get("height")?.scalar()?; DValue::Sketch(Sketch::rectangle(w.into(),h.into(),None)) }
+        ,Circle => { let r=get("radius")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::circle(r.into(),segs,None)) }
+        ,RoundedRectangle => { let w=get("width")?.scalar()?; let h=get("height")?.scalar()?; let c=get("corner_r")?.scalar()?; let segs=as_usize(get("corner_segments")?.scalar()?); DValue::Sketch(Sketch::rounded_rectangle(w.into(),h.into(),c.into(),segs,None)) }
+        ,Ellipse => { let w=get("width")?.scalar()?; let h=get("height")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::ellipse(w.into(),h.into(),segs,None)) }
+        ,RegularNgon => { let sides=as_usize(get("sides")?.scalar()?); let r=get("radius")?.scalar()?; DValue::Sketch(Sketch::regular_ngon(sides,r.into(),None)) }
+        ,RightTriangle => { let w=get("width")?.scalar()?; let h=get("height")?.scalar()?; DValue::Sketch(Sketch::right_triangle(w.into(),h.into(),None)) }
+        ,Trapezoid => { let t=get("top_width")?.scalar()?; let b=get("bottom_width")?.scalar()?; let h=get("height")?.scalar()?; let off=get("top_offset")?.scalar()?; DValue::Sketch(Sketch::trapezoid(t.into(),b.into(),h.into(),off.into(),None)) }
+        ,Star => { let n=as_usize(get("points")?.scalar()?); let outer=get("outer_r")?.scalar()?; let inner=get("inner_r")?.scalar()?; DValue::Sketch(Sketch::star(n,outer.into(),inner.into(),None)) }
+        ,TeardropSketch => { let w=get("width")?.scalar()?; let h=get("height")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::teardrop(w.into(),h.into(),segs,None)) }
+        ,EggSketch => { let w=get("width")?.scalar()?; let l=get("length")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::egg(w.into(),l.into(),segs,None)) }
+        ,Squircle => { let w=get("width")?.scalar()?; let h=get("height")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::squircle(w.into(),h.into(),segs,None)) }
+        ,Keyhole => { let cr=get("circle_r")?.scalar()?; let hw=get("handle_w")?.scalar()?; let hh=get("handle_h")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::keyhole(cr.into(),hw.into(),hh.into(),segs,None)) }
+        ,Reuleaux => { let s=as_usize(get("sides")?.scalar()?); let r=get("radius")?.scalar()?; let arcs=as_usize(get("arc_segments")?.scalar()?); DValue::Sketch(Sketch::reuleaux(s,r.into(),arcs,None)) }
+        ,Ring => { let id=get("id")?.scalar()?; let th=get("thickness")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::ring(id.into(),th.into(),segs,None)) }
+        ,PieSlice => { let r=get("radius")?.scalar()?; let s=get("start_deg")?.scalar()?; let e=get("end_deg")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::pie_slice(r.into(),s.into(),e.into(),segs,None)) }
+        ,Supershape => { let a=get("a")?.scalar()?; let b=get("b")?.scalar()?; let m=get("m")?.scalar()?; let n1=get("n1")?.scalar()?; let n2=get("n2")?.scalar()?; let n3=get("n3")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::supershape(a.into(),b.into(),m.into(),n1.into(),n2.into(),n3.into(),segs,None)) }
+        ,CircleWithKeyway => { let r=get("radius")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); let kW=get("key_w")?.scalar()?; let kD=get("key_d")?.scalar()?; DValue::Sketch(Sketch::circle_with_keyway(r.into(),segs,kW.into(),kD.into(),None)) }
+        ,CircleWithFlat => { let r=get("radius")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); let dist=get("flat_dist")?.scalar()?; DValue::Sketch(Sketch::circle_with_flat(r.into(),segs,dist.into(),None)) }
+        ,CircleWithTwoFlats => { let r=get("radius")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); let dist=get("flat_dist")?.scalar()?; DValue::Sketch(Sketch::circle_with_two_flats(r.into(),segs,dist.into(),None)) }
+        ,Heart => { let w=get("width")?.scalar()?; let h=get("height")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::heart(w.into(),h.into(),segs,None)) }
+        ,Crescent => { let o=get("outer_r")?.scalar()?; let i=get("inner_r")?.scalar()?; let off=get("offset")?.scalar()?; let segs=as_usize(get("segments")?.scalar()?); DValue::Sketch(Sketch::crescent(o.into(),i.into(),off.into(),segs,None)) }
+        ,AirfoilNaca4 => { let mc=get("max_camber")?.scalar()?; let cp=get("camber_pos")?.scalar()?; let th=get("thickness")?.scalar()?; let chord=get("chord")?.scalar()?; let samples=as_usize(get("samples")?.scalar()?); DValue::Sketch(Sketch::airfoil_naca4(mc.into(),cp.into(),th.into(),chord.into(),samples,None)) }
 
-        // Boolean (mesh) ----------------------------------------------------
-        Union => {
-            let a = get("A")?.mesh()?;
-            let b = get("B")?.mesh()?;
-            DValue::Mesh(a.union(&b))
-        }
-        Subtract => {
-            let a = get("A")?.mesh()?;
-            let b = get("B")?.mesh()?;
-            log::warn!("a: {:#?}", a);
-            log::warn!("b: {:#?}", b);
-            DValue::Mesh(a.difference(&b))
-            //DValue::Mesh(Mesh::new())
-        }
-        Intersect => {
-            let a = get("A")?.mesh()?;
-            let b = get("B")?.mesh()?;
-            DValue::Mesh(a.intersection(&b))
-        }
+        /* ---- mesh primitives ---- */
+        ,Cube => { let s=get("size")?.scalar()?; DValue::Mesh(Mesh::cube(s.into(),None)) }
+        ,Cuboid => { let w=get("width")?.scalar()?; let l=get("length")?.scalar()?; let h=get("height")?.scalar()?; DValue::Mesh(Mesh::cuboid(w.into(),l.into(),h.into(),None)) }
+        ,Sphere => { let r=get("radius")?.scalar()?; let seg=as_usize(get("segments")?.scalar()?); let st=as_usize(get("stacks")?.scalar()?); DValue::Mesh(Mesh::sphere(r.into(),seg,st,None)) }
+        ,Cylinder => { let r=get("radius")?.scalar()?; let h=get("height")?.scalar()?; let seg=as_usize(get("segments")?.scalar()?); DValue::Mesh(Mesh::cylinder(r.into(),h.into(),seg,None)) }
+        ,Frustum => { let r1=get("r1")?.scalar()?; let r2=get("r2")?.scalar()?; let h=get("height")?.scalar()?; let seg=as_usize(get("segments")?.scalar()?); DValue::Mesh(Mesh::frustum(r1.into(),r2.into(),h.into(),seg,None)) }
+        ,Octahedron => { let r=get("radius")?.scalar()?; DValue::Mesh(Mesh::octahedron(r.into(),None)) }
+        ,Icosahedron => { let r=get("radius")?.scalar()?; DValue::Mesh(Mesh::icosahedron(r.into(),None)) }
+        ,Torus => { let mr=get("major_r")?.scalar()?; let nr=get("minor_r")?.scalar()?; let sm=as_usize(get("segments_major")?.scalar()?); let sn=as_usize(get("segments_minor")?.scalar()?); DValue::Mesh(Mesh::torus(mr.into(),nr.into(),sm,sn,None)) }
+        ,EggMesh => { let w=get("width")?.scalar()?; let l=get("length")?.scalar()?; let rs=as_usize(get("rev_segments")?.scalar()?); let os=as_usize(get("outline_segments")?.scalar()?); DValue::Mesh(Mesh::egg(w.into(),l.into(),rs,os,None)) }
+        ,TeardropMesh => { let w=get("width")?.scalar()?; let h=get("height")?.scalar()?; let rs=as_usize(get("rev_segments")?.scalar()?); let ss=as_usize(get("shape_segments")?.scalar()?); DValue::Mesh(Mesh::teardrop(w.into(),h.into(),rs,ss,None)) }
+        ,TeardropCylinder => { let w=get("width")?.scalar()?; let l=get("length")?.scalar()?; let h=get("height")?.scalar()?; let ss=as_usize(get("shape_segments")?.scalar()?); DValue::Mesh(Mesh::teardrop_cylinder(w.into(),l.into(),h.into(),ss,None)) }
+        ,Ellipsoid => { let rx=get("rx")?.scalar()?; let ry=get("ry")?.scalar()?; let rz=get("rz")?.scalar()?; let seg=as_usize(get("segments")?.scalar()?); let st=as_usize(get("stacks")?.scalar()?); DValue::Mesh(Mesh::ellipsoid(rx.into(),ry.into(),rz.into(),seg,st,None)) }
+        ,Arrow => { let s=get("start")?.vec3()?; let d=get("direction")?.vec3()?; let seg=as_usize(get("segments")?.scalar()?); let orient=as_bool(get("orientation")?.scalar()?); DValue::Mesh(Mesh::arrow(Point3::new(s.x.into(),s.y.into(),s.z.into()),Vector3::new(d.x.into(),d.y.into(),d.z.into()),seg,orient,None)) }
 
-        // Transforms ------------------------------------------------------------
-        Translate => {
-            let m = get("in")?.mesh()?;
-            let o = get("offset")?.vec3()?;
-            DValue::Mesh(m.translate(o.x.into(), o.y.into(), o.z.into()))
-        }
-        Rotate => {
-            let m = get("in")?.mesh()?;
-            let axis = get("axis")?.vec3()?.normalize();
-            let ang = get("angle (rad)")?.scalar()?;
-            let deg = ang.to_degrees();
-            DValue::Mesh(m.rotate(axis.x * deg, axis.y * deg, axis.z * deg))
-        }
-        Scale => {
-            let m = get("in")?.mesh()?;
-            let f = get("factors")?.vec3()?;
-            DValue::Mesh(m.scale(f.x.into(), f.y.into(), f.z.into()))
-        }
+        /* ---- booleans ---- */
+        ,MeshUnion => { let a=get("A")?.mesh()?; let b=get("B")?.mesh()?; DValue::Mesh(a.union(&b)) }
+        ,MeshSubtract => { let a=get("A")?.mesh()?; let b=get("B")?.mesh()?; DValue::Mesh(a.difference(&b)) }
+        ,MeshIntersect => { let a=get("A")?.mesh()?; let b=get("B")?.mesh()?; DValue::Mesh(a.intersection(&b)) }
+        ,SketchUnion => { let a=get("A")?.sketch()?; let b=get("B")?.sketch()?; DValue::Sketch(a.union(&b)) }
+        ,SketchSubtract => { let a=get("A")?.sketch()?; let b=get("B")?.sketch()?; DValue::Sketch(a.difference(&b)) }
+        ,SketchIntersect => { let a=get("A")?.sketch()?; let b=get("B")?.sketch()?; DValue::Sketch(a.intersection(&b)) }
 
-        // 2-D → 3-D ---------------------------------------------------------
-        Extrude => {
-            let s = get("profile")?.sketch()?;
-            let h = get("height")?.scalar()?;
-            DValue::Mesh(s.extrude(h.into()))
-        }
+        /* ---- mesh transforms ---- */
+        ,TranslateMesh => { let m=get("in")?.mesh()?; let o=get("offset")?.vec3()?; DValue::Mesh(m.translate(o.x.into(),o.y.into(),o.z.into())) }
+        ,RotateMesh => { let m=get("in")?.mesh()?; let axis=get("axis")?.vec3()?.normalize(); let ang=get("angle_rad")?.scalar()?; let deg=ang.to_degrees(); DValue::Mesh(m.rotate(axis.x*deg,axis.y*deg,axis.z*deg)) }
+        ,ScaleMesh => { let m=get("in")?.mesh()?; let f=get("factors")?.vec3()?; DValue::Mesh(m.scale(f.x.into(),f.y.into(),f.z.into())) }
+        ,MirrorMesh => { let m=get("in")?.mesh()?; let n=get("plane_normal")?.vec3()?; let w=get("plane_w")?.scalar()?; DValue::Mesh(m.mirror(Plane::from_normal(Vector3::new(n.x.into(),n.y.into(),n.z.into()), w.into()))) }
+        ,CenterMesh => { let m=get("in")?.mesh()?; DValue::Mesh(m.center()) }
+        ,FloatMesh => { let m=get("in")?.mesh()?; DValue::Mesh(m.float()) }
+        ,InverseMesh => { let m=get("in")?.mesh()?; DValue::Mesh(m.inverse()) }
+        ,DistributeArcMesh => { let m=get("in")?.mesh()?; let count=as_usize(get("count")?.scalar()?); let r=get("radius")?.scalar()?; let s=get("start_deg")?.scalar()?; let e=get("end_deg")?.scalar()?; DValue::Mesh(m.distribute_arc(count,r.into(),s.into(),e.into())) }
+        ,DistributeLinearMesh => { let m=get("in")?.mesh()?; let count=as_usize(get("count")?.scalar()?); let dir=get("dir")?.vec3()?; let spacing=get("spacing")?.scalar()?; DValue::Mesh(m.distribute_linear(count,Vector3::new(dir.x.into(),dir.y.into(),dir.z.into()),spacing.into())) }
+        ,DistributeGridMesh => { let m=get("in")?.mesh()?; let rows=as_usize(get("rows")?.scalar()?); let cols=as_usize(get("cols")?.scalar()?); let dx=get("dx")?.scalar()?; let dy=get("dy")?.scalar()?; DValue::Mesh(m.distribute_grid(rows,cols,dx.into(),dy.into())) }
+
+        /* ---- sketch transforms ---- */
+        ,TranslateSketch => { let s=get("in")?.sketch()?; let o=get("offset")?.vec3()?; DValue::Sketch(s.translate(o.x.into(),o.y.into(),o.z.into())) }
+        ,RotateSketch => { let s=get("in")?.sketch()?; let axis=get("axis")?.vec3()?.normalize(); let ang=get("angle_rad")?.scalar()?; let deg=ang.to_degrees(); DValue::Sketch(s.rotate(axis.x*deg,axis.y*deg,axis.z*deg)) }
+        ,ScaleSketch => { let s=get("in")?.sketch()?; let f=get("factors")?.vec3()?; DValue::Sketch(s.scale(f.x.into(),f.y.into(),f.z.into())) }
+        ,MirrorSketch => { let s=get("in")?.sketch()?; let n=get("plane_normal")?.vec3()?; let w=get("plane_w")?.scalar()?; DValue::Sketch(s.mirror(Plane::from_normal(Vector3::new(n.x.into(),n.y.into(),n.z.into()), w.into()))) }
+        ,CenterSketch => { let s=get("in")?.sketch()?; DValue::Sketch(s.center()) }
+        ,FloatSketch => { let s=get("in")?.sketch()?; DValue::Sketch(s.float()) }
+        ,InverseSketch => { let s=get("in")?.sketch()?; DValue::Sketch(s.inverse()) }
+        ,DistributeArcSketch => { let s=get("in")?.sketch()?; let count=as_usize(get("count")?.scalar()?); let r=get("radius")?.scalar()?; let st=get("start_deg")?.scalar()?; let en=get("end_deg")?.scalar()?; DValue::Sketch(s.distribute_arc(count,r.into(),st.into(),en.into())) }
+        ,DistributeLinearSketch => { let s=get("in")?.sketch()?; let count=as_usize(get("count")?.scalar()?); let dir=get("dir")?.vec3()?; let spacing=get("spacing")?.scalar()?; DValue::Sketch(s.distribute_linear(count,Vector3::new(dir.x.into(),dir.y.into(),dir.z.into()),spacing.into())) }
+        ,DistributeGridSketch => { let s=get("in")?.sketch()?; let rows=as_usize(get("rows")?.scalar()?); let cols=as_usize(get("cols")?.scalar()?); let dx=get("dx")?.scalar()?; let dy=get("dy")?.scalar()?; DValue::Sketch(s.distribute_grid(rows,cols,dx.into(),dy.into())) }
+
+        /* ---- 2D -> 3D ---- */
+        ,Extrude => { let s=get("profile")?.sketch()?; let h=get("height")?.scalar()?; DValue::Mesh(s.extrude(h.into())) }
+        ,ExtrudeVector => { let s=get("profile")?.sketch()?; let d=get("direction")?.vec3()?; DValue::Mesh(s.extrude_vector(Vector3::new(d.x.into(),d.y.into(),d.z.into()))) }
+        ,Revolve => { let s=get("profile")?.sketch()?; let a=get("angle_deg")?.scalar()?; let seg=as_usize(get("segments")?.scalar()?); DValue::Mesh(s.revolve(a.into(),seg).unwrap()) }
+        ,Loft => { let btm=get("bottom")?.mesh()?; let top=get("top")?.mesh()?; let caps=as_bool(get("caps")?.scalar()?);
+                   // Use polygon[0] convention
+                   DValue::Mesh(Sketch::loft(&btm.polygons[0],&top.polygons[0],caps).unwrap()) }
+        ,Sweep => { let s=get("profile")?.sketch()?; let p0=get("p0")?.vec3()?; let p1=get("p1")?.vec3()?; 
+                    let path=[Point3::new(p0.x.into(),p0.y.into(),p0.z.into()), Point3::new(p1.x.into(),p1.y.into(),p1.z.into())];
+                    DValue::Mesh(s.sweep(&path)) }
+
+        /* mesh<->sketch */
+        ,Flatten => { let m=get("in")?.mesh()?; DValue::Sketch(m.flatten()) }
+        ,Slice => { let m=get("in")?.mesh()?; let n=get("plane_normal")?.vec3()?; let w=get("plane_w")?.scalar()?; 
+                    let plane=Plane::from_normal(Vector3::new(n.x.into(),n.y.into(),n.z.into()), w.into()); DValue::Sketch(m.slice(plane)) }
+
+        ,Gyroid => { let m=get("in")?.mesh()?; let res=as_usize(get("resolution")?.scalar()?); let period=get("period")?.scalar()?; let iso=get("iso_value")?.scalar()?; DValue::Mesh(m.gyroid(res,period.into(),iso.into(), None)) }
+        ,SchwarzP => { let m=get("in")?.mesh()?; let res=as_usize(get("resolution")?.scalar()?); let period=get("period")?.scalar()?; let iso=get("iso_value")?.scalar()?; DValue::Mesh(m.schwarz_p(res,period.into(),iso.into(), None)) }
+        ,SchwarzD => { let m=get("in")?.mesh()?; let res=as_usize(get("resolution")?.scalar()?); let period=get("period")?.scalar()?; let iso=get("iso_value")?.scalar()?; DValue::Mesh(m.schwarz_d(res,period.into(),iso.into(), None)) }
+
+        //,Text => {
+        //    // Supply a font in your project (adjust path)
+        //    const FONT:&[u8]=include_bytes!("../assets/DejaVuSans.ttf");
+        //    let size=get("size")?.scalar()?;
+        //    let sketch=Sketch::text("Hello",FONT,size.into(),None);
+        //    DValue::Sketch(sketch)
+        //}
     };
 
     cache.insert(out, value.clone());
