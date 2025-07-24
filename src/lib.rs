@@ -538,29 +538,28 @@ impl eframe::App for AluminaApp {
                         ui.heading("Control");
                         ui.separator();
                         
-                        ui.collapsing("Loaded models", |ui| {
-							let mut remove: Option<usize> = None;
-							for (i, m) in self.models.iter_mut().enumerate() {
-								ui.horizontal(|ui| {
-									if ui.selectable_label(self.selected_model==Some(i), &m.name).clicked() {
-									   self.selected_model = Some(i);
-									}
-									if ui.button("✕").clicked() { remove = Some(i); }
-								});
-							}
-							if ui.button("Add…").clicked() {
-								self.selected_model = None; // -> add after file dialog
-								spawn_file_picker(Arc::clone(&self.model_data),"Model mesh (stl,dxf)",&["stl","dxf"]);
-							}
-							if let Some(idx) = remove {
-								self.models.remove(idx);
-								if let Some(selected) = &mut self.selected_model {
-									if *selected >= idx {
-										*selected = selected.saturating_sub(1);
-									}
+                        ui.label("Loaded models");
+						let mut remove: Option<usize> = None;
+						for (i, m) in self.models.iter_mut().enumerate() {
+							ui.horizontal(|ui| {
+								if ui.selectable_label(self.selected_model==Some(i), &m.name).clicked() {
+								   self.selected_model = Some(i);
+								}
+								if ui.button("✕").clicked() { remove = Some(i); }
+							});
+						}
+						if ui.button("Add…").clicked() {
+							self.selected_model = None; // -> add after file dialog
+							spawn_file_picker(Arc::clone(&self.model_data),"Model mesh (stl,dxf)",&["stl","dxf","obj","ply","amf"]);
+						}
+						if let Some(idx) = remove {
+							self.models.remove(idx);
+							if let Some(selected) = &mut self.selected_model {
+								if *selected >= idx {
+									*selected = selected.saturating_sub(1);
 								}
 							}
-						});
+						}
 
                         ui.separator();
                         ui.label("Snap view");
@@ -876,14 +875,6 @@ impl eframe::App for AluminaApp {
                             spawn_file_picker(
                                 Arc::clone(&self.workpiece_data),
                                 "Workpiece mesh (stl,dxf)",
-                                &["stl", "dxf"],
-                            );
-                        }
-
-                        if ui.button("load model").clicked() {
-                            spawn_file_picker(
-                                Arc::clone(&self.model_data),
-                                "Model mesh (stl,dxf)",
                                 &["stl", "dxf"],
                             );
                         }
