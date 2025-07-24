@@ -1,31 +1,28 @@
 #![warn(clippy::pedantic)]
-mod renderer;
 mod design_graph;
+mod renderer;
 
+use crate::design_graph::{AllTemplates, UserState};
 use csgrs::{mesh::Mesh, sketch::Sketch, traits::CSG};
 use eframe::egui;
+use egui_node_graph2::GraphEditorState;
 use futures_channel::oneshot;
 use geo::{Geometry, LineString};
+use glow::HasContext as _;
 use js_sys::Uint8Array;
 use log::Level;
 use nalgebra::{Matrix4, Perspective3, Point3, Translation3, UnitQuaternion, Vector3};
 use std::{
     cell::RefCell,
+    collections::HashSet,
     f32::consts::{FRAC_PI_2, PI},
     future::Future,
     rc::Rc,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU32, Ordering},
-    },
-    collections::HashSet,
+    sync::{Arc, Mutex},
 };
 use wasm_bindgen::{JsCast, prelude::*};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{Event, HtmlInputElement, HtmlCanvasElement, window};
-use glow::{HasContext as _};
-use crate::design_graph::{AllTemplates, UserState};
-use egui_node_graph2::{GraphEditorState};
+use web_sys::{Event, HtmlCanvasElement, HtmlInputElement, window};
 
 const INVALID_SCALE: Vector3<f32> = Vector3::new(-1.0, -1.0, -1.0);
 
@@ -61,40 +58,49 @@ impl std::fmt::Display for Tool {
 #[derive(Clone)]
 struct ModelEntry {
     /// File-name or synthesized label shown in the sidebar list.
-    name:          String,
+    name: String,
     /// Geometry exactly as it came off disk (float-shifted but *not* scaled / offset).
-    base:          Mesh<()>,
+    base: Mesh<()>,
     /// Copy actually rendered (base -> scale -> offset).
-    mesh:          Mesh<()>,
+    mesh: Mesh<()>,
     /// Desired user scale and last-applied scale (so we can lazily rebuild).
-    scale:         Vector3<f32>,
+    scale: Vector3<f32>,
     applied_scale: Vector3<f32>,
     /// Desired user offset (mm) and last-applied offset.
-    offset:        Vector3<f32>,
-    applied_offset:Vector3<f32>,
+    offset: Vector3<f32>,
+    applied_offset: Vector3<f32>,
 }
 
 impl ModelEntry {
     fn new(name: impl Into<String>, base: Mesh<()>) -> Self {
         Self {
-            name:           name.into(),
-            scale:          Vector3::new(1.0,1.0,1.0),
-            applied_scale:  Vector3::new(1.0,1.0,1.0),
-            offset:         Vector3::zeros(),
+            name: name.into(),
+            scale: Vector3::new(1.0, 1.0, 1.0),
+            applied_scale: Vector3::new(1.0, 1.0, 1.0),
+            offset: Vector3::zeros(),
             applied_offset: Vector3::zeros(),
-            mesh:           base.clone(), // immediately rebuilt below
+            mesh: base.clone(), // immediately rebuilt below
             base,
         }
     }
 
     /// Apply pending scale / offset if the user changed either parameter.
     fn refresh(&mut self) {
-        if self.scale    != self.applied_scale
-        || self.offset   != self.applied_offset {
-            self.mesh = self.base.clone()
-                        .scale(self.scale.x.into(), self.scale.y.into(), self.scale.z.into())
-                        .translate(self.offset.x.into(), self.offset.y.into(), self.offset.z.into());
-            self.applied_scale  = self.scale;
+        if self.scale != self.applied_scale || self.offset != self.applied_offset {
+            self.mesh = self
+                .base
+                .clone()
+                .scale(
+                    self.scale.x.into(),
+                    self.scale.y.into(),
+                    self.scale.z.into(),
+                )
+                .translate(
+                    self.offset.x.into(),
+                    self.offset.y.into(),
+                    self.offset.z.into(),
+                );
+            self.applied_scale = self.scale;
             self.applied_offset = self.offset;
         }
     }
@@ -132,13 +138,13 @@ enum Tab {
 }
 
 pub struct AluminaApp {
-    rotation:UnitQuaternion<f32>,
-    translation:egui::Vec2,
-    zoom:f32,
+    rotation: UnitQuaternion<f32>,
+    translation: egui::Vec2,
+    zoom: f32,
     /// All user-loaded models (plus the default one).
-    models:Vec<ModelEntry>,
+    models: Vec<ModelEntry>,
     /// Index of the *currently-selected* model in the sidebar (if any).
-    selected_model:Option<usize>,
+    selected_model: Option<usize>,
     workpiece_data: Arc<Mutex<Option<Vec<u8>>>>,
     model_data: Arc<Mutex<Option<Vec<u8>>>>,
     wireframe: bool,
@@ -157,7 +163,7 @@ pub struct AluminaApp {
     /// The last slice that was generated for `current_layer`
     sliced_layer: Option<Sketch<()>>,
     gpu: Option<Arc<Mutex<renderer::GpuLines>>>,
-    gpu_faces:Option<Arc<Mutex<renderer::GpuLines>>>,
+    gpu_faces: Option<Arc<Mutex<renderer::GpuLines>>>,
     vertex_storage: Vec<f32>,
     selected_tab: Tab,
     diag_poll: bool,
@@ -186,13 +192,15 @@ pub struct AluminaApp {
         design_graph::DType,
         design_graph::DValue,
         design_graph::Template,
-        UserState>,
+        UserState,
+    >,
     design_user_state: UserState,
 }
 
 impl AluminaApp {
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
-        let mut entry = ModelEntry::new("icosahedron", Mesh::<()>::icosahedron(100.0,None).float());
+        let mut entry =
+            ModelEntry::new("icosahedron", Mesh::<()>::icosahedron(100.0, None).float());
         entry.refresh();
 
         // ------------------------------------------------------------------
@@ -211,51 +219,51 @@ impl AluminaApp {
             rotation: front_rot,
             translation: egui::Vec2::new(0.0, -250.0),
             zoom: initial_zoom,
-            models:vec![entry],
-            selected_model:Some(0),
+            models: vec![entry],
+            selected_model: Some(0),
             workpiece_data: Arc::new(Mutex::new(None)),
             model_data: Arc::new(Mutex::new(None)),
             wireframe: true,
-			edges: true,
-			faces: true,
-			normals: true,
-			vertices: true,
-			workarea: true,
+            edges: true,
+            faces: true,
+            normals: true,
+            vertices: true,
+            workarea: true,
             work_size: Vector3::new(200.0, 200.0, 200.0),
             layer_height: 0.20,
             current_layer: 0,
             show_slice: false,
             sliced_layer: None,
             gpu: None,
-            gpu_faces:None,
+            gpu_faces: None,
             vertex_storage: Vec::new(),
             selected_tab: Tab::Control,
             diag_poll: false,
             diag_led: false,
-			selected_tool: Tool::Laser,   // default
-			kerf: 0.1,
-			touch_off: true,
-			perimeters: 2,
-			infill_type: InfillType::Linear,
-			endmill_width: 10.0,
-			endmill_length: 60.0,
-			drill_width: 10.0,
-			drill_length: 60.0,
-			pixels_wide: 2048,
-			pixels_tall: 1024,
-			layer_delay: 2.0,
-			peel_distance: 15.0,
-			design_state: GraphEditorState::default(),
-			design_user_state: UserState::default(),
+            selected_tool: Tool::Laser, // default
+            kerf: 0.1,
+            touch_off: true,
+            perimeters: 2,
+            infill_type: InfillType::Linear,
+            endmill_width: 10.0,
+            endmill_length: 60.0,
+            drill_width: 10.0,
+            drill_length: 60.0,
+            pixels_wide: 2048,
+            pixels_tall: 1024,
+            layer_delay: 2.0,
+            peel_distance: 15.0,
+            design_state: GraphEditorState::default(),
+            design_user_state: UserState::default(),
         }
     }
 
     /// Refresh *all* models (each entry decides whether it needs to rebuild).
-    fn refresh_models(&mut self){
+    fn refresh_models(&mut self) {
         for m in &mut self.models {
             m.refresh();
         }
-     }
+    }
 
     /// Re-builds `sliced_layer` for the current Z level.
     fn refresh_slice(&mut self) {
@@ -264,23 +272,25 @@ impl AluminaApp {
         }
 
         // slice a *union* of all models
-        let z=self.current_layer as f32*self.layer_height;
-        let plane=csgrs::mesh::plane::Plane::from_normal(Vector3::z(),z.into());
+        let z = self.current_layer as f32 * self.layer_height;
+        let plane = csgrs::mesh::plane::Plane::from_normal(Vector3::z(), z.into());
         let mut iter = self.models.iter();
         if let Some(first) = iter.next() {
             let mut combined = first.mesh.clone();
-            for m in iter { combined = combined.union(&m.mesh); }
+            for m in iter {
+                combined = combined.union(&m.mesh);
+            }
             self.sliced_layer = Some(combined.slice(plane));
         }
     }
 
     /// Marks `model` as dirty so that next frame will rebuild
-    fn invalidate_selected_model(&mut self){
+    fn invalidate_selected_model(&mut self) {
         if let Some(idx) = self.selected_model {
-            self.models[idx].applied_scale  = INVALID_SCALE;
+            self.models[idx].applied_scale = INVALID_SCALE;
             self.models[idx].applied_offset = Vector3::repeat(f32::NAN);
         }
-     }
+    }
 
     /// Replace currently-selected entry’s *base* geometry.
     fn set_selected_base(&mut self, mesh: Mesh<()>, name: String) {
@@ -291,9 +301,9 @@ impl AluminaApp {
             self.refresh_models();
             self.refresh_slice();
         }
-     }
-     
-     /// convenience: currently-selected entry (mutable)
+    }
+
+    /// convenience: currently-selected entry (mutable)
     fn sel_mut(&mut self) -> Option<&mut ModelEntry> {
         self.selected_model
             .and_then(move |i| self.models.get_mut(i))
@@ -304,7 +314,7 @@ impl AluminaApp {
         let mut e = ModelEntry::new(name, mesh);
         e.refresh();
         self.models.push(e);
-        self.selected_model = Some(self.models.len()-1);
+        self.selected_model = Some(self.models.len() - 1);
         self.refresh_slice();
     }
 }
@@ -365,7 +375,7 @@ impl AluminaApp {
         }
 
         // ── 2) model / slice ──────────────────────────────────────────────
-        fn add_line_string(ls: &LineString<f32>, z: f32, col: [f32; 3], out: &mut Vec<f32>) {
+        fn add_line_string(ls: &LineString<f64>, z: f32, col: [f32; 3], out: &mut Vec<f32>) {
             for w in ls.0.windows(2) {
                 let a = w[0];
                 let b = w[1];
@@ -397,122 +407,145 @@ impl AluminaApp {
                 }
             }
         } else {
-			/* ---------- model wire-frame (edges) ----------------------------- */
-			if self.edges {
-				const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
-				for model_entry in &self.models {
-					let model = &model_entry.mesh;
-					for p in &model.polygons {
-						for (a, b) in p.edges() {
-							self.vertex_storage.extend_from_slice(&[
-								a.pos.x as f32, a.pos.y as f32, a.pos.z as f32,
-								WHITE[0], WHITE[1], WHITE[2],
-								b.pos.x as f32, b.pos.y as f32, b.pos.z as f32,
-								WHITE[0], WHITE[1], WHITE[2],
-							]);
-						}
-					}
-				}
-			}
+            /* ---------- model wire-frame (edges) ----------------------------- */
+            if self.edges {
+                const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
+                for model_entry in &self.models {
+                    let model = &model_entry.mesh;
+                    for p in &model.polygons {
+                        for (a, b) in p.edges() {
+                            self.vertex_storage.extend_from_slice(&[
+                                a.pos.x as f32,
+                                a.pos.y as f32,
+                                a.pos.z as f32,
+                                WHITE[0],
+                                WHITE[1],
+                                WHITE[2],
+                                b.pos.x as f32,
+                                b.pos.y as f32,
+                                b.pos.z as f32,
+                                WHITE[0],
+                                WHITE[1],
+                                WHITE[2],
+                            ]);
+                        }
+                    }
+                }
+            }
 
-			/* ---------- model faces (solid) ---------------------------------- */
-			if self.faces {
-				for model_entry in &self.models {
-					let model = &model_entry.mesh;
-					for p in &model.polygons {
-						let verts = &p.vertices;
-						if verts.len() >= 3 {
-							for i in 1..verts.len() - 1 {
-								for v in [&verts[0].pos, &verts[i].pos, &verts[i + 1].pos] {
-									faces.extend_from_slice(&[
-										v.x as f32,
-										v.y as f32,
-										v.z as f32,
-										renderer::EGUI_BLUE[0],
-										renderer::EGUI_BLUE[1],
-										renderer::EGUI_BLUE[2],
-									]);
-								}
-							}
-						}
-					}
-				}
-			}
-			
-			// === Polygon normals ========================================================
-			if self.normals {
-				const NORMAL_COL: [f32; 3] = [1.0, 0.0, 0.0];          // red
-				let normal_len = (self.work_size.norm() * 0.04) as f32; // ≈ 4 % of diag
+            /* ---------- model faces (solid) ---------------------------------- */
+            if self.faces {
+                for model_entry in &self.models {
+                    let model = &model_entry.mesh;
+                    for p in &model.polygons {
+                        let verts = &p.vertices;
+                        if verts.len() >= 3 {
+                            for i in 1..verts.len() - 1 {
+                                for v in [&verts[0].pos, &verts[i].pos, &verts[i + 1].pos] {
+                                    faces.extend_from_slice(&[
+                                        v.x as f32,
+                                        v.y as f32,
+                                        v.z as f32,
+                                        renderer::EGUI_BLUE[0],
+                                        renderer::EGUI_BLUE[1],
+                                        renderer::EGUI_BLUE[2],
+                                    ]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
-				for model_entry in &self.models {
-					let model = &model_entry.mesh;
-					for p in &model.polygons {
-						// polygon centroid
-						let mut c = Vector3::zeros();
-						for v in &p.vertices { c += Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32); }
-						c /= p.vertices.len() as f32;
+            // === Polygon normals ========================================================
+            if self.normals {
+                const NORMAL_COL: [f32; 3] = [1.0, 0.0, 0.0]; // red
+                let normal_len = (self.work_size.norm() * 0.04) as f32; // ≈ 4 % of diag
 
-						let n = Vector3::<f32>::new(
-							p.plane.normal().x as f32,
-							p.plane.normal().y as f32,
-							p.plane.normal().z as f32,
-						).normalize() * normal_len;
+                for model_entry in &self.models {
+                    let model = &model_entry.mesh;
+                    for p in &model.polygons {
+                        // polygon centroid
+                        let mut c = Vector3::zeros();
+                        for v in &p.vertices {
+                            c += Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32);
+                        }
+                        c /= p.vertices.len() as f32;
 
-						self.vertex_storage.extend_from_slice(&[
-							c.x, c.y, c.z, NORMAL_COL[0], NORMAL_COL[1], NORMAL_COL[2],
-							c.x + n.x, c.y + n.y, c.z + n.z, NORMAL_COL[0], NORMAL_COL[1], NORMAL_COL[2],
-						]);
-					}
-				}
-			}
-			
-			// === Vertex spheres =========================================================
-			if self.vertices {
-				const VERT_COL: [f32; 3] = [1.0, 1.0, 0.0];           // yellow
-				let r = (self.work_size.norm() * 0.005) as f32;       // ≈ 0.5 % of diag
+                        let n = Vector3::<f32>::new(
+                            p.plane.normal().x as f32,
+                            p.plane.normal().y as f32,
+                            p.plane.normal().z as f32,
+                        )
+                        .normalize()
+                            * normal_len;
 
-				// de-dupe identical vertices so we don’t draw the same sphere many times
-				let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
-				let quant = 1_000_000.0; // 1 µm grid
+                        self.vertex_storage.extend_from_slice(&[
+                            c.x,
+                            c.y,
+                            c.z,
+                            NORMAL_COL[0],
+                            NORMAL_COL[1],
+                            NORMAL_COL[2],
+                            c.x + n.x,
+                            c.y + n.y,
+                            c.z + n.z,
+                            NORMAL_COL[0],
+                            NORMAL_COL[1],
+                            NORMAL_COL[2],
+                        ]);
+                    }
+                }
+            }
 
-				for model_entry in &self.models {
-					let model = &model_entry.mesh;
-					for p in &model.polygons {
-						for v in &p.vertices {
-							let key = (
-								(v.pos.x * quant) as i64,
-								(v.pos.y * quant) as i64,
-								(v.pos.z * quant) as i64,
-							);
-							if seen.insert(key) {
-								let c = Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32);
-								add_vertex_sphere(c, r, VERT_COL, &mut faces);
-							}
-						}
-					}
-				}
-			}
-		}
+            // === Vertex spheres =========================================================
+            if self.vertices {
+                const VERT_COL: [f32; 3] = [1.0, 1.0, 0.0]; // yellow
+                let r = (self.work_size.norm() * 0.005) as f32; // ≈ 0.5 % of diag
 
-		// ---------- upload / (re-)create VBOs -----------------------------------
-		if let Some(lines_gpu) = &self.gpu {
-			if let Ok(mut g) = lines_gpu.lock() {
-				unsafe { g.upload_vertices(gl, &self.vertex_storage) };
-			}
-		}
+                // de-dupe identical vertices so we don’t draw the same sphere many times
+                let mut seen: HashSet<(i64, i64, i64)> = HashSet::new();
+                let quant = 1_000_000.0; // 1 µm grid
 
-		// Faces VBO is present only while “faces” is checked
-		let need_tris = !faces.is_empty();
-		if need_tris {
-			let faces_gpu = self
-				.gpu_faces
-				.get_or_insert_with(|| Arc::new(Mutex::new(unsafe { renderer::GpuLines::new(gl) })));
-			if let Ok(mut g) = faces_gpu.lock() {
-				unsafe { g.upload_vertices(gl, &faces) };
-			}
-		} else {
-			self.gpu_faces = None;
-		}
+                for model_entry in &self.models {
+                    let model = &model_entry.mesh;
+                    for p in &model.polygons {
+                        for v in &p.vertices {
+                            let key = (
+                                (v.pos.x * quant) as i64,
+                                (v.pos.y * quant) as i64,
+                                (v.pos.z * quant) as i64,
+                            );
+                            if seen.insert(key) {
+                                let c =
+                                    Vector3::new(v.pos.x as f32, v.pos.y as f32, v.pos.z as f32);
+                                add_vertex_sphere(c, r, VERT_COL, &mut faces);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------- upload / (re-)create VBOs -----------------------------------
+        if let Some(lines_gpu) = &self.gpu {
+            if let Ok(mut g) = lines_gpu.lock() {
+                unsafe { g.upload_vertices(gl, &self.vertex_storage) };
+            }
+        }
+
+        // Faces VBO is present only while “faces” is checked
+        let need_tris = !faces.is_empty();
+        if need_tris {
+            let faces_gpu = self.gpu_faces.get_or_insert_with(|| {
+                Arc::new(Mutex::new(unsafe { renderer::GpuLines::new(gl) }))
+            });
+            if let Ok(mut g) = faces_gpu.lock() {
+                unsafe { g.upload_vertices(gl, &faces) };
+            }
+        } else {
+            self.gpu_faces = None;
+        }
     }
 }
 
@@ -537,29 +570,38 @@ impl eframe::App for AluminaApp {
                     .show(ctx, |ui| {
                         ui.heading("Control");
                         ui.separator();
-                        
+
                         ui.label("Loaded models");
-						let mut remove: Option<usize> = None;
-						for (i, m) in self.models.iter_mut().enumerate() {
-							ui.horizontal(|ui| {
-								if ui.selectable_label(self.selected_model==Some(i), &m.name).clicked() {
-								   self.selected_model = Some(i);
-								}
-								if ui.button("✕").clicked() { remove = Some(i); }
-							});
-						}
-						if ui.button("Add…").clicked() {
-							self.selected_model = None; // -> add after file dialog
-							spawn_file_picker(Arc::clone(&self.model_data),"Model mesh (stl,dxf)",&["stl","dxf","obj","ply","amf"]);
-						}
-						if let Some(idx) = remove {
-							self.models.remove(idx);
-							if let Some(selected) = &mut self.selected_model {
-								if *selected >= idx {
-									*selected = selected.saturating_sub(1);
-								}
-							}
-						}
+                        let mut remove: Option<usize> = None;
+                        for (i, m) in self.models.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                if ui
+                                    .selectable_label(self.selected_model == Some(i), &m.name)
+                                    .clicked()
+                                {
+                                    self.selected_model = Some(i);
+                                }
+                                if ui.button("✕").clicked() {
+                                    remove = Some(i);
+                                }
+                            });
+                        }
+                        if ui.button("Add…").clicked() {
+                            self.selected_model = None; // -> add after file dialog
+                            spawn_file_picker(
+                                Arc::clone(&self.model_data),
+                                "Model mesh (stl,dxf)",
+                                &["stl", "dxf", "obj", "ply", "amf"],
+                            );
+                        }
+                        if let Some(idx) = remove {
+                            self.models.remove(idx);
+                            if let Some(selected) = &mut self.selected_model {
+                                if *selected >= idx {
+                                    *selected = selected.saturating_sub(1);
+                                }
+                            }
+                        }
 
                         ui.separator();
                         ui.label("Snap view");
@@ -602,104 +644,110 @@ impl eframe::App for AluminaApp {
                         // ────────────── Scale Controls ──────────────
                         ui.separator();
                         ui.collapsing("Model scale", |ui| {
-							// --- 1. borrow models[idx] once --------------------
-							if let Some(idx) = self.selected_model {
-								let m = &mut self.models[idx];
+                            // --- 1. borrow models[idx] once --------------------
+                            if let Some(idx) = self.selected_model {
+                                let m = &mut self.models[idx];
 
-								// Track whether any DragValue changed
-								let mut changed = false;
+                                // Track whether any DragValue changed
+                                let mut changed = false;
 
-								ui.horizontal(|ui| {
-									ui.label("X:");
-									changed |= ui
-										.add(egui::DragValue::new(&mut m.scale.x)
-											 .speed(0.01)
-											 .range(0.01..=100.0))
-										.changed();
-								});
-								ui.horizontal(|ui| {
-									ui.label("Y:");
-									changed |= ui
-										.add(egui::DragValue::new(&mut m.scale.y)
-											 .speed(0.01)
-											 .range(0.01..=100.0))
-										.changed();
-								});
-								ui.horizontal(|ui| {
-									ui.label("Z:");
-									changed |= ui
-										.add(egui::DragValue::new(&mut m.scale.z)
-											 .speed(0.01)
-											 .range(0.01..=100.0))
-										.changed();
-								});
+                                ui.horizontal(|ui| {
+                                    ui.label("X:");
+                                    changed |= ui
+                                        .add(
+                                            egui::DragValue::new(&mut m.scale.x)
+                                                .speed(0.01)
+                                                .range(0.01..=100.0),
+                                        )
+                                        .changed();
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Y:");
+                                    changed |= ui
+                                        .add(
+                                            egui::DragValue::new(&mut m.scale.y)
+                                                .speed(0.01)
+                                                .range(0.01..=100.0),
+                                        )
+                                        .changed();
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Z:");
+                                    changed |= ui
+                                        .add(
+                                            egui::DragValue::new(&mut m.scale.z)
+                                                .speed(0.01)
+                                                .range(0.01..=100.0),
+                                        )
+                                        .changed();
+                                });
 
-								if ui.button("Reset scale").clicked() {
-									m.scale = Vector3::new(1.0, 1.0, 1.0);
-									changed = true;
-								}
+                                if ui.button("Reset scale").clicked() {
+                                    m.scale = Vector3::new(1.0, 1.0, 1.0);
+                                    changed = true;
+                                }
 
-								// Invalidate *through the same mutable borrow*.
-								if changed {
-									m.applied_scale = INVALID_SCALE;
-								}
-							} else {
-								ui.label("No model selected");
-							}
-							// --- m is dropped here; safe to touch self again if you need to ---
-						});
+                                // Invalidate *through the same mutable borrow*.
+                                if changed {
+                                    m.applied_scale = INVALID_SCALE;
+                                }
+                            } else {
+                                ui.label("No model selected");
+                            }
+                            // --- m is dropped here; safe to touch self again if you need to ---
+                        });
 
                         // ────────────── Position Controls ──────────────
                         ui.separator();
                         ui.collapsing("Model position", |ui| {
-							if let Some(idx) = self.selected_model {
-								let m = &mut self.models[idx];
+                            if let Some(idx) = self.selected_model {
+                                let m = &mut self.models[idx];
 
-								let mut changed = false;
+                                let mut changed = false;
 
-								if ui.button("Float (Z = 0)").clicked() {
-									m.offset = Vector3::zeros();
-									m.base = m.base.clone().float();
-									changed = true;
-								}
-								if ui.button("Center").clicked() {
-									m.offset = Vector3::zeros();
-									m.base = m.base.clone().center();
-									changed = true;
-								}
+                                if ui.button("Float (Z = 0)").clicked() {
+                                    m.offset = Vector3::zeros();
+                                    m.base = m.base.clone().float();
+                                    changed = true;
+                                }
+                                if ui.button("Center").clicked() {
+                                    m.offset = Vector3::zeros();
+                                    m.base = m.base.clone().center();
+                                    changed = true;
+                                }
 
-								ui.horizontal(|ui| {
-									ui.label("X:");
-									changed |= ui
-										.add(egui::DragValue::new(&mut m.offset.x).speed(1.0))
-										.changed();
-								});
-								ui.horizontal(|ui| {
-									ui.label("Y:");
-									changed |= ui
-										.add(egui::DragValue::new(&mut m.offset.y).speed(1.0))
-										.changed();
-								});
-								ui.horizontal(|ui| {
-									ui.label("Z:");
-									changed |= ui
-										.add(egui::DragValue::new(&mut m.offset.z).speed(1.0))
-										.changed();
-								});
+                                ui.horizontal(|ui| {
+                                    ui.label("X:");
+                                    changed |= ui
+                                        .add(egui::DragValue::new(&mut m.offset.x).speed(1.0))
+                                        .changed();
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Y:");
+                                    changed |= ui
+                                        .add(egui::DragValue::new(&mut m.offset.y).speed(1.0))
+                                        .changed();
+                                });
+                                ui.horizontal(|ui| {
+                                    ui.label("Z:");
+                                    changed |= ui
+                                        .add(egui::DragValue::new(&mut m.offset.z).speed(1.0))
+                                        .changed();
+                                });
 
-								if ui.button("Reset position").clicked() {
-									m.offset = Vector3::zeros();
-									changed = true;
-								}
+                                if ui.button("Reset position").clicked() {
+                                    m.offset = Vector3::zeros();
+                                    changed = true;
+                                }
 
-								if changed {
-									// Same trick: mark dirty without re-borrowing self.
-									m.applied_offset = Vector3::repeat(f32::NAN);
-								}
-							} else {
-								ui.label("No model selected");
-							}
-						});
+                                if changed {
+                                    // Same trick: mark dirty without re-borrowing self.
+                                    m.applied_offset = Vector3::repeat(f32::NAN);
+                                }
+                            } else {
+                                ui.label("No model selected");
+                            }
+                        });
 
                         ui.separator();
                         ui.collapsing("Work area (mm)", |ui| {
@@ -716,134 +764,174 @@ impl eframe::App for AluminaApp {
                                 ui.add(egui::DragValue::new(&mut self.work_size.z).speed(1.0));
                             });
                         });
-                        
-                        ui.separator();
-						ui.collapsing("Tool settings", |ui| {
-							// ── tool selector ──
-							ui.horizontal(|ui| {
-								ui.label("Tool:");
-								egui::ComboBox::from_id_salt("tool_select")
-									.selected_text(self.selected_tool.to_string())
-									.show_ui(ui, |ui| {
-										ui.selectable_value(&mut self.selected_tool, Tool::Laser, "Laser");
-										ui.selectable_value(&mut self.selected_tool, Tool::Plasma, "Plasma");
-										ui.selectable_value(&mut self.selected_tool, Tool::Extruder, "Extruder");
-										ui.selectable_value(&mut self.selected_tool, Tool::Endmill, "Endmill");
-										ui.selectable_value(&mut self.selected_tool, Tool::Drill, "Drill");
-										ui.selectable_value(&mut self.selected_tool, Tool::DlpLcd, "DLP / LCD");
-									});
-							});
 
-							// ── tool-specific widgets ──
-							match self.selected_tool {
-								Tool::Laser => {
-									ui.horizontal(|ui| {
-										ui.label("Kerf (mm):");
-										ui.add(
-											egui::DragValue::new(&mut self.kerf)
-												.speed(0.01)
-												.range(0.0..=5.0),
-										);
-									});
-								}
-								Tool::Plasma => {
-									ui.checkbox(&mut self.touch_off, "Touch off");
-								}
-								Tool::Extruder => {
-									ui.horizontal(|ui| {
-										ui.label("Perimeters:");
-										ui.add(
-											egui::DragValue::new(&mut self.perimeters)
-												.speed(1)
-												.range(0..=10),
-										);
-									});
-									ui.horizontal(|ui| {
-										ui.label("Infill type:");
-										egui::ComboBox::from_id_salt("infill_type")
-											.selected_text(self.infill_type.to_string())
-											.show_ui(ui, |ui| {
-												ui.selectable_value(&mut self.infill_type, InfillType::Linear, "Linear");
-												ui.selectable_value(&mut self.infill_type, InfillType::Gyroid, "Gyroid");
-												ui.selectable_value(&mut self.infill_type, InfillType::SchwarzP, "Schwarz P");
-												ui.selectable_value(&mut self.infill_type, InfillType::SchwarzD, "Schwarz D");
-											});
-									});
-								}
-								Tool::Endmill => {
-									ui.horizontal(|ui| {
-										ui.label("Endmill width (mm):");
-										ui.add(
-											egui::DragValue::new(&mut self.endmill_width)
-												.speed(0.1)
-												.range(0.1..=100.0),
-										);
-									});
-									ui.horizontal(|ui| {
-										ui.label("Endmill length (mm):");
-										ui.add(
-											egui::DragValue::new(&mut self.endmill_length)
-												.speed(0.1)
-												.range(1.0..=300.0),
-										);
-									});
-								}
-								Tool::Drill => {
-									ui.horizontal(|ui| {
-										ui.label("Drill width (mm):");
-										ui.add(
-											egui::DragValue::new(&mut self.drill_width)
-												.speed(0.1)
-												.range(0.1..=100.0),
-										);
-									});
-									ui.horizontal(|ui| {
-										ui.label("Drill length (mm):");
-										ui.add(
-											egui::DragValue::new(&mut self.drill_length)
-												.speed(0.1)
-												.range(1.0..=300.0),
-										);
-									});
-								}
-								Tool::DlpLcd => {
-									ui.horizontal(|ui| {
-										ui.label("Pixels wide:");
-										ui.add(
-											egui::DragValue::new(&mut self.pixels_wide)
-												.speed(1)
-												.range(1..=8192),
-										);
-									});
-									ui.horizontal(|ui| {
-										ui.label("Pixels tall:");
-										ui.add(
-											egui::DragValue::new(&mut self.pixels_tall)
-												.speed(1)
-												.range(1..=8192),
-										);
-									});
-									ui.horizontal(|ui| {
-										ui.label("Layer delay (s):");
-										ui.add(
-											egui::DragValue::new(&mut self.layer_delay)
-												.speed(0.1)
-												.range(0.0..=60.0),
-										);
-									});
-									ui.horizontal(|ui| {
-										ui.label("Peel distance (mm):");
-										ui.add(
-											egui::DragValue::new(&mut self.peel_distance)
-												.speed(0.1)
-												.range(0.0..=100.0),
-										);
-									});
-								}
-							}
-						});
-						
-						ui.separator();
+                        ui.separator();
+                        ui.collapsing("Tool settings", |ui| {
+                            // ── tool selector ──
+                            ui.horizontal(|ui| {
+                                ui.label("Tool:");
+                                egui::ComboBox::from_id_salt("tool_select")
+                                    .selected_text(self.selected_tool.to_string())
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(
+                                            &mut self.selected_tool,
+                                            Tool::Laser,
+                                            "Laser",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.selected_tool,
+                                            Tool::Plasma,
+                                            "Plasma",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.selected_tool,
+                                            Tool::Extruder,
+                                            "Extruder",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.selected_tool,
+                                            Tool::Endmill,
+                                            "Endmill",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.selected_tool,
+                                            Tool::Drill,
+                                            "Drill",
+                                        );
+                                        ui.selectable_value(
+                                            &mut self.selected_tool,
+                                            Tool::DlpLcd,
+                                            "DLP / LCD",
+                                        );
+                                    });
+                            });
+
+                            // ── tool-specific widgets ──
+                            match self.selected_tool {
+                                Tool::Laser => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Kerf (mm):");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.kerf)
+                                                .speed(0.01)
+                                                .range(0.0..=5.0),
+                                        );
+                                    });
+                                }
+                                Tool::Plasma => {
+                                    ui.checkbox(&mut self.touch_off, "Touch off");
+                                }
+                                Tool::Extruder => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Perimeters:");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.perimeters)
+                                                .speed(1)
+                                                .range(0..=10),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Infill type:");
+                                        egui::ComboBox::from_id_salt("infill_type")
+                                            .selected_text(self.infill_type.to_string())
+                                            .show_ui(ui, |ui| {
+                                                ui.selectable_value(
+                                                    &mut self.infill_type,
+                                                    InfillType::Linear,
+                                                    "Linear",
+                                                );
+                                                ui.selectable_value(
+                                                    &mut self.infill_type,
+                                                    InfillType::Gyroid,
+                                                    "Gyroid",
+                                                );
+                                                ui.selectable_value(
+                                                    &mut self.infill_type,
+                                                    InfillType::SchwarzP,
+                                                    "Schwarz P",
+                                                );
+                                                ui.selectable_value(
+                                                    &mut self.infill_type,
+                                                    InfillType::SchwarzD,
+                                                    "Schwarz D",
+                                                );
+                                            });
+                                    });
+                                }
+                                Tool::Endmill => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Endmill width (mm):");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.endmill_width)
+                                                .speed(0.1)
+                                                .range(0.1..=100.0),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Endmill length (mm):");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.endmill_length)
+                                                .speed(0.1)
+                                                .range(1.0..=300.0),
+                                        );
+                                    });
+                                }
+                                Tool::Drill => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Drill width (mm):");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.drill_width)
+                                                .speed(0.1)
+                                                .range(0.1..=100.0),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Drill length (mm):");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.drill_length)
+                                                .speed(0.1)
+                                                .range(1.0..=300.0),
+                                        );
+                                    });
+                                }
+                                Tool::DlpLcd => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Pixels wide:");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.pixels_wide)
+                                                .speed(1)
+                                                .range(1..=8192),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Pixels tall:");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.pixels_tall)
+                                                .speed(1)
+                                                .range(1..=8192),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Layer delay (s):");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.layer_delay)
+                                                .speed(0.1)
+                                                .range(0.0..=60.0),
+                                        );
+                                    });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Peel distance (mm):");
+                                        ui.add(
+                                            egui::DragValue::new(&mut self.peel_distance)
+                                                .speed(0.1)
+                                                .range(0.0..=100.0),
+                                        );
+                                    });
+                                }
+                            }
+                        });
+
+                        ui.separator();
                         ui.horizontal(|ui| {
                             ui.label("Layer height (mm):");
                             ui.add(
@@ -893,34 +981,34 @@ impl eframe::App for AluminaApp {
                     let mut guard = self.workpiece_data.lock().unwrap();
                     guard.take()
                 };
-                if let Some(bytes)=workpiece_bytes_opt{
-					if let Some(mesh)=load_mesh_from_bytes(&bytes){
-						self.add_model(mesh.float(), "workpiece".into());
-						log::info!("[alumina] workpiece loaded ({} bytes)", bytes.len());
-					} else {
-						log::error!("Could not parse workpiece file");
-					}
-				}
+                if let Some(bytes) = workpiece_bytes_opt {
+                    if let Some(mesh) = load_mesh_from_bytes(&bytes) {
+                        self.add_model(mesh.float(), "workpiece".into());
+                        log::info!("[alumina] workpiece loaded ({} bytes)", bytes.len());
+                    } else {
+                        log::error!("Could not parse workpiece file");
+                    }
+                }
 
                 // ── model ────────────────────────────────────────────────────
                 let model_bytes_opt = {
                     let mut guard = self.model_data.lock().unwrap();
                     guard.take()
                 };
-                if let Some(bytes)=model_bytes_opt{
-					if let Some(mesh)=load_mesh_from_bytes(&bytes){
-						let name = "model".to_string();
-						// replace if user had a selection, else add as new model
-						if let Some(sel) = self.selected_model {
-							self.set_selected_base(mesh.float(), name);
-						} else {
-							self.add_model(mesh.float(), name);
-						}
-						log::info!("[alumina] model loaded ({} bytes)", bytes.len());
-					} else {
-						log::error!("Could not parse model file – unsupported or corrupt");
-					}
-				}
+                if let Some(bytes) = model_bytes_opt {
+                    if let Some(mesh) = load_mesh_from_bytes(&bytes) {
+                        let name = "model".to_string();
+                        // replace if user had a selection, else add as new model
+                        if let Some(sel) = self.selected_model {
+                            self.set_selected_base(mesh.float(), name);
+                        } else {
+                            self.add_model(mesh.float(), name);
+                        }
+                        log::info!("[alumina] model loaded ({} bytes)", bytes.len());
+                    } else {
+                        log::error!("Could not parse model file – unsupported or corrupt");
+                    }
+                }
 
                 // Apply scaling if the user changed any of the factors -------------
                 self.refresh_models();
@@ -972,29 +1060,31 @@ impl eframe::App for AluminaApp {
                         unsafe { self.sync_buffers(gl) };
 
                         // ── 3) schedule GL paint right after egui’s own meshes ────────
-                        if let Some(lines_gpu)=&self.gpu{
-							let lines_gpu = lines_gpu.clone();
-							let faces_gpu = self.gpu_faces.clone();
+                        if let Some(lines_gpu) = &self.gpu {
+                            let lines_gpu = lines_gpu.clone();
+                            let faces_gpu = self.gpu_faces.clone();
                             let mvp = mvp(self, rect); // copy for the closure
 
                             let callback = egui_glow::CallbackFn::new(move |_info, painter| {
                                 let gl = painter.gl();
-								unsafe{
-									gl.enable(glow::DEPTH_TEST);
-									gl.depth_func(glow::LEQUAL);
-									gl.clear(glow::DEPTH_BUFFER_BIT);
+                                unsafe {
+                                    gl.enable(glow::DEPTH_TEST);
+                                    gl.depth_func(glow::LEQUAL);
+                                    gl.clear(glow::DEPTH_BUFFER_BIT);
 
-									// draw filled faces first (slight offset keeps outlines crisp)
-									if let Some(faces_gpu)=&faces_gpu{
-										if let Ok(f)=faces_gpu.lock(){
-											gl.enable(glow::POLYGON_OFFSET_FILL);
-											gl.polygon_offset(1.0,1.0);
-											f.paint_tris(gl,mvp);
-											gl.disable(glow::POLYGON_OFFSET_FILL);
-										}
-									}
-									// then draw outlines
-									if let Ok(l)=lines_gpu.lock(){ l.paint(gl,mvp); }
+                                    // draw filled faces first (slight offset keeps outlines crisp)
+                                    if let Some(faces_gpu) = &faces_gpu {
+                                        if let Ok(f) = faces_gpu.lock() {
+                                            gl.enable(glow::POLYGON_OFFSET_FILL);
+                                            gl.polygon_offset(1.0, 1.0);
+                                            f.paint_tris(gl, mvp);
+                                            gl.disable(glow::POLYGON_OFFSET_FILL);
+                                        }
+                                    }
+                                    // then draw outlines
+                                    if let Ok(l) = lines_gpu.lock() {
+                                        l.paint(gl, mvp);
+                                    }
                                 }
                             });
 
@@ -1024,45 +1114,53 @@ impl eframe::App for AluminaApp {
             }
 
             Tab::Design => {
-				egui::SidePanel::left("design_side")
-					.resizable(false)
-					.min_width(140.0)
-					.show(ctx, |ui| {
-						ui.heading("Design");
-						ui.separator();
-						if ui.button("Clear graph").clicked() {
-							self.design_state = GraphEditorState::default();
-						}
-						if ui.button("Apply to model").clicked() {
-							let roots = design_graph::graph_roots(&self.design_state.graph);
-							log::warn!("roots: {:#?}", roots);
-							if roots.is_empty() {
-								log::warn!("Apply to model: No root nodes found in the graph.");
-							}
-							for root_out in roots {
-								match design_graph::evaluate(&self.design_state.graph, root_out){
-									Ok(mesh)=>self.add_model(mesh.float(),"graph".into()),
-									Err(e)=>log::error!("Graph eval failed for root {:?}: {e}", root_out),
-								}
-							}
-						}
-						if ui.button("Save .graph").clicked() {
-							// serialise self.design_state.graph and trigger download …
-						}
-					});
+                egui::SidePanel::left("design_side")
+                    .resizable(false)
+                    .min_width(140.0)
+                    .show(ctx, |ui| {
+                        ui.heading("Design");
+                        ui.separator();
+                        if ui.button("Clear graph").clicked() {
+                            self.design_state = GraphEditorState::default();
+                        }
+                        if ui.button("Apply to model").clicked() {
+                            let roots = design_graph::graph_roots(&self.design_state.graph);
+                            log::warn!("roots: {:#?}", roots);
+                            if roots.is_empty() {
+                                log::warn!("Apply to model: No root nodes found in the graph.");
+                            }
+                            for root_out in roots {
+                                match design_graph::evaluate(&self.design_state.graph, root_out) {
+                                    Ok(mesh) => self.add_model(mesh.float(), "graph".into()),
+                                    Err(e) => log::error!(
+                                        "Graph eval failed for root {:?}: {e}",
+                                        root_out
+                                    ),
+                                }
+                            }
+                        }
+                        if ui.button("Save .graph").clicked() {
+                            // serialise self.design_state.graph and trigger download …
+                        }
+                    });
 
-				egui::CentralPanel::default().show(ctx, |ui| {
-					ui.set_min_size(ui.available_size());
-					let resp = self.design_state.draw_graph_editor(
-						ui,
-						AllTemplates,
-						&mut self.design_user_state,
-						Vec::<egui_node_graph2::NodeResponse<design_graph::EmptyUserResponse, design_graph::NodeData>>::new(),
-					);
-					// (no special per-node responses needed)
-					_ = resp;
-				});
-			}
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    let resp = self.design_state.draw_graph_editor(
+                        ui,
+                        AllTemplates,
+                        &mut self.design_user_state,
+                        Vec::<
+                            egui_node_graph2::NodeResponse<
+                                design_graph::EmptyUserResponse,
+                                design_graph::NodeData,
+                            >,
+                        >::new(),
+                    );
+                    // (no special per-node responses needed)
+                    _ = resp;
+                });
+            }
         }
     }
 }
@@ -1104,14 +1202,40 @@ fn add_vertex_sphere(c: Vector3<f32>, r: f32, col: [f32; 3], out: &mut Vec<f32>)
     // golden-ratio icosahedron (12 verts, 20 tris)
     const PHI: f32 = 1.618_034;
     const V: &[[f32; 3]] = &[
-        [-1.0,  PHI,  0.0], [ 1.0,  PHI,  0.0], [-1.0, -PHI,  0.0], [ 1.0, -PHI,  0.0],
-        [ 0.0, -1.0,  PHI], [ 0.0,  1.0,  PHI], [ 0.0, -1.0, -PHI], [ 0.0,  1.0, -PHI],
-        [ PHI,  0.0, -1.0], [ PHI,  0.0,  1.0], [-PHI,  0.0, -1.0], [-PHI,  0.0,  1.0],
+        [-1.0, PHI, 0.0],
+        [1.0, PHI, 0.0],
+        [-1.0, -PHI, 0.0],
+        [1.0, -PHI, 0.0],
+        [0.0, -1.0, PHI],
+        [0.0, 1.0, PHI],
+        [0.0, -1.0, -PHI],
+        [0.0, 1.0, -PHI],
+        [PHI, 0.0, -1.0],
+        [PHI, 0.0, 1.0],
+        [-PHI, 0.0, -1.0],
+        [-PHI, 0.0, 1.0],
     ];
     const I: &[[u16; 3]] = &[
-        [0,11,5],[0,5,1],[0,1,7],[0,7,10],[0,10,11],[1,5,9],[5,11,4],[11,10,2],
-        [10,7,6],[7,1,8],[3,9,4],[3,4,2],[3,2,6],[3,6,8],[3,8,9],[4,9,5],
-        [2,4,11],[6,2,10],[8,6,7],[9,8,1],
+        [0, 11, 5],
+        [0, 5, 1],
+        [0, 1, 7],
+        [0, 7, 10],
+        [0, 10, 11],
+        [1, 5, 9],
+        [5, 11, 4],
+        [11, 10, 2],
+        [10, 7, 6],
+        [7, 1, 8],
+        [3, 9, 4],
+        [3, 4, 2],
+        [3, 2, 6],
+        [3, 6, 8],
+        [3, 8, 9],
+        [4, 9, 5],
+        [2, 4, 11],
+        [6, 2, 10],
+        [8, 6, 7],
+        [9, 8, 1],
     ];
 
     for idx in I {
@@ -1203,7 +1327,7 @@ fn load_mesh_from_bytes(bytes: &[u8]) -> Option<Mesh<()>> {
 
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
-	console_log::init_with_level(Level::Debug).expect("failed to init logger");
+    console_log::init_with_level(Level::Debug).expect("failed to init logger");
 
     let web_options = eframe::WebOptions::default();
 
@@ -1215,7 +1339,7 @@ pub async fn start() -> Result<(), JsValue> {
     let canvas = document
         .get_element_by_id("alumina_canvas")
         .expect("canvas not found")
-        .dyn_into::<HtmlCanvasElement>()?;   // ← cast
+        .dyn_into::<HtmlCanvasElement>()?; // ← cast
 
     // Pass the element instead of the id
     eframe::WebRunner::new()

@@ -19,6 +19,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c71b1793ee61086797f5c80b6efa2b8ffa6d5dd703f118545808a7f2e27f7046"
 
 [[package]]
+name = "accesskit"
+version = "0.16.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99b76d84ee70e30a4a7e39ab9018e2b17a6a09e31084176cc7c0b2dec036ba45"
+dependencies = [
+ "enumn",
+ "serde",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -33,6 +43,7 @@ dependencies = [
  "cfg-if",
  "getrandom 0.3.3",
  "once_cell",
+ "serde",
  "version_check",
  "zerocopy",
 ]
@@ -219,6 +230,12 @@ dependencies = [
 
 [[package]]
 name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
+
+[[package]]
+name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -246,6 +263,9 @@ name = "bitflags"
 version = "2.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b8e56985ec62d17e9c1001dc89c88ecd7dc08e47eba5ec7c29c7b5eeecde967"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "bitstream-io"
@@ -610,8 +630,8 @@ dependencies = [
  "geo",
  "hashbrown",
  "nalgebra",
- "parry3d",
- "rapier3d",
+ "parry3d-f64",
+ "rapier3d-f64",
  "robust",
  "stl_io",
  "thiserror 2.0.12",
@@ -667,7 +687,7 @@ version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b1c7e5bbb92b417588a5e733e095416c27c06eedc051065cc955a0a8c8389d9"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "proc-macro2",
  "quote",
  "syn",
@@ -725,6 +745,7 @@ checksum = "775cfde491852059e386c4e1deb4aef381c617dc364184c6f6afee99b87c402b"
 dependencies = [
  "bytemuck",
  "emath",
+ "serde",
 ]
 
 [[package]]
@@ -767,11 +788,14 @@ version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53eafabcce0cb2325a59a98736efe0bf060585b437763f8c476957fb274bb974"
 dependencies = [
+ "accesskit",
  "ahash",
  "emath",
  "epaint",
  "log",
  "nohash-hasher",
+ "ron",
+ "serde",
 ]
 
 [[package]]
@@ -814,6 +838,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4f3aa356e9e606c071f94b6fe3d8bbeb93399af5bff31cd3ca8cea4c76d6b12f"
 dependencies = [
  "egui",
+ "serde",
  "slotmap",
  "smallvec",
  "thiserror 1.0.69",
@@ -832,6 +857,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1fe0049ce51d0fb414d029e668dd72eb30bc2b739bf34296ed97bd33df544f3"
 dependencies = [
  "bytemuck",
+ "serde",
 ]
 
 [[package]]
@@ -862,6 +888,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "enumn"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2f9ed6b3789237c8a0c1c505af1c7eb2c560df6186f01b098c3a1064ea532f38"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "epaint"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -876,6 +913,7 @@ dependencies = [
  "log",
  "nohash-hasher",
  "parking_lot",
+ "serde",
 ]
 
 [[package]]
@@ -1752,6 +1790,7 @@ dependencies = [
  "num-complex",
  "num-rational",
  "num-traits 0.2.19",
+ "serde",
  "simba",
  "typenum",
 ]
@@ -1876,6 +1915,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "73f88a1307638156682bada9d7604135552957b7818057dcef22705b4d509495"
 dependencies = [
  "num-traits 0.2.19",
+ "serde",
 ]
 
 [[package]]
@@ -2289,10 +2329,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "parry3d"
+name = "parry3d-f64"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a50f0d5730859f8326b26c8057aae09b790804f3e6c9dec38f4b2a1b91664529"
+checksum = "ed9184cf88474deb3e5ec6c67a8c6fe51ee9572e8c476d44b7de643937a125c5"
 dependencies = [
  "approx",
  "arrayvec",
@@ -2510,10 +2550,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "rapier3d"
+name = "rapier3d-f64"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "106edf55a415c64d2dccbb79faa2085e2bd02ded26b41b399b04b90219484c7e"
+checksum = "75a10d0735644bdc60b54a573a1ba413bab4f4822ce403e4f637f4d0b3d54d6b"
 dependencies = [
  "approx",
  "arrayvec",
@@ -2526,7 +2566,7 @@ dependencies = [
  "num-derive",
  "num-traits 0.2.19",
  "ordered-float",
- "parry3d",
+ "parry3d-f64",
  "profiling",
  "rustc-hash",
  "simba",
@@ -2644,6 +2684,18 @@ name = "robust"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e27ee8bb91ca0adcf0ecb116293afa12d393f9c2b9b9cd54d33e8078fe19839"
+
+[[package]]
+name = "ron"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b91f7eff05f748767f183df4320a63d6936e9c6107d97c9e6bdd9784f4289c94"
+dependencies = [
+ "base64 0.21.7",
+ "bitflags 2.9.1",
+ "serde",
+ "serde_derive",
+]
 
 [[package]]
 name = "rstar"
@@ -2817,6 +2869,7 @@ version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dbff4acf519f630b3a3ddcfaea6c06b42174d9a44bc70c620e9ed1649d58b82a"
 dependencies = [
+ "serde",
  "version_check",
 ]
 
@@ -2825,6 +2878,9 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "smithay-client-toolkit"
