@@ -31,3 +31,4 @@ trunk serve --open --release
 - enable persistence via https://docs.rs/eframe/latest/eframe/
 - implement tweening for snap view
 - implement pinch to zoom and something for dragging on mobile
+- expanding "model scale" or "model position" without a model loaded results in crash
