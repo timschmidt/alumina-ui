@@ -20,7 +20,7 @@ futures-channel = { version = "0.3", default-features = false, features = ["allo
 js-sys  = { version = "0.3", default-features = false }
 web-sys = { version = "0.3", features = [
     "Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlCanvasElement", "File", "FileList",
-    "Event", "EventTarget", "Blob",
+    "Event", "EventTarget", "Blob", "Request", "RequestInit", "Response", "Headers", "CanvasRenderingContext2d", "TextMetrics",
 ] }
 once_cell = { version = "1.21.3", default-features = false }
 console_log = { version = "1.0.0", default-features = false }

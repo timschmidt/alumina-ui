@@ -1104,13 +1104,13 @@ fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<
         CircleWithKeyway => {
             let r = get("radius")?.scalar()?;
             let segs = as_usize(get("segments")?.scalar()?);
-            let kW = get("key_w")?.scalar()?;
-            let kD = get("key_d")?.scalar()?;
+            let k_w = get("key_w")?.scalar()?;
+            let k_d = get("key_d")?.scalar()?;
             DValue::Sketch(Sketch::circle_with_keyway(
                 r.into(),
                 segs,
-                kW.into(),
-                kD.into(),
+                k_w.into(),
+                k_d.into(),
                 None,
             ))
         }

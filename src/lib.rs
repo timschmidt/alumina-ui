@@ -1,6 +1,7 @@
 #![warn(clippy::pedantic)]
 mod design_graph;
 mod renderer;
+mod fonts;
 
 use crate::design_graph::{AllTemplates, UserState};
 use csgrs::{mesh::Mesh, sketch::Sketch, traits::CSG};
@@ -168,6 +169,10 @@ pub struct AluminaApp {
     selected_tab: Tab,
     diag_poll: bool,
     diag_led: bool,
+    // Diagnostics – per‑GPIO desired state (false = low)
+    diag_d0:bool,diag_d1:bool,diag_d2:bool,diag_d3:bool,
+    diag_d4:bool,diag_d5:bool,diag_d6:bool,diag_d7:bool,
+    diag_d9:bool,diag_d11:bool,diag_d12:bool,diag_d13:bool,
     selected_tool: Tool,
     // Laser
     kerf: f32,
@@ -240,6 +245,9 @@ impl AluminaApp {
             selected_tab: Tab::Control,
             diag_poll: false,
             diag_led: false,
+            diag_d0:false,diag_d1:false,diag_d2:false,diag_d3:false,
+			diag_d4:false,diag_d5:false,diag_d6:false,diag_d7:false,
+			diag_d9:false,diag_d11:false,diag_d12:false,diag_d13:false,
             selected_tool: Tool::Laser, // default
             kerf: 0.1,
             touch_off: true,
@@ -1104,9 +1112,36 @@ impl eframe::App for AluminaApp {
                     .show(ctx, |ui| {
                         ui.heading("Diagnostics");
                         ui.separator();
-                        ui.checkbox(&mut self.diag_poll, "Poll");
-                        ui.checkbox(&mut self.diag_led, "LED");
-                    });
+                        ui.checkbox(&mut self.diag_poll,"Poll");
+						if ui.checkbox(&mut self.diag_led,"Status LED").changed(){
+							if self.diag_led { send_queue_command("status_on"); }
+							else { send_queue_command("status_off"); }
+						}
+						ui.separator();
+						ui.label("GPIO pins");
+						let mut gpio_row = |label: &str,
+											state: &mut bool,
+											high: &'static str,
+											low:  &'static str,
+											ui: &mut egui::Ui| {
+							if ui.checkbox(state, label).changed() {
+								if *state { send_queue_command(high); }
+								else      { send_queue_command(low);  }
+							}
+						};
+						gpio_row("D0",&mut self.diag_d0,"d0_high","d0_low",ui);
+						gpio_row("D1",&mut self.diag_d1,"d1_high","d1_low",ui);
+						gpio_row("D2",&mut self.diag_d2,"d2_high","d2_low",ui);
+						gpio_row("D3",&mut self.diag_d3,"d3_high","d3_low",ui);
+						gpio_row("D4",&mut self.diag_d4,"d4_high","d4_low",ui);
+						gpio_row("D5",&mut self.diag_d5,"d5_high","d5_low",ui);
+						gpio_row("D6",&mut self.diag_d6,"d6_high","d6_low",ui);
+						gpio_row("D7",&mut self.diag_d7,"d7_high","d7_low",ui);
+						gpio_row("D9",&mut self.diag_d9,"d9_high","d9_low",ui);
+						gpio_row("D11",&mut self.diag_d11,"d11_high","d11_low",ui);
+						gpio_row("D12",&mut self.diag_d12,"d12_high","d12_low",ui);
+						gpio_row("D13",&mut self.diag_d13,"d13_high","d13_low",ui);
+					});
 
                 egui::CentralPanel::default().show(ctx, |_| {
                     // (optional) placeholder – nothing rendered for now
@@ -1313,6 +1348,27 @@ fn spawn_file_picker(
     });
 }
 
+/// POST a simple text command to the firmware `/queue` endpoint.
+fn send_queue_command(cmd:&'static str){
+    execute(async move{
+        use wasm_bindgen::prelude::*;
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen_futures::JsFuture;
+        use web_sys::{Request,RequestInit,Window,Response};
+        let window:Window=web_sys::window().expect("no window");
+        let mut opts=RequestInit::new();
+        opts.set_method("POST");
+        opts.set_body(&JsValue::from_str(cmd));
+        let request=Request::new_with_str_and_init("/queue",&opts).unwrap();
+        request.headers().set("Accept","text/plain").ok();
+        request.headers().set("Content-Type","text/plain").ok();
+        let resp_value=JsFuture::from(window.fetch_with_request(&request)).await;
+        if let Ok(val)=resp_value{
+            let _resp:Response=val.dyn_into().unwrap();
+        }
+    });
+}
+
 fn load_mesh_from_bytes(bytes: &[u8]) -> Option<Mesh<()>> {
     if let Ok(m) = Mesh::<()>::from_stl(bytes, None) {
         return Some(m);
@@ -1328,6 +1384,13 @@ fn load_mesh_from_bytes(bytes: &[u8]) -> Option<Mesh<()>> {
 #[wasm_bindgen(start)]
 pub async fn start() -> Result<(), JsValue> {
     console_log::init_with_level(Level::Debug).expect("failed to init logger");
+
+	// Kick off font collection
+    let inv = fonts::collect_available_fonts().await;
+    log::info!("[alumina] detected {} fonts", inv.families.len());
+    for f in &inv.families {
+        log::debug!("  font: {f}");
+    }
 
     let web_options = eframe::WebOptions::default();
 
