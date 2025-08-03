@@ -22,7 +22,8 @@ futures-channel = { version = "0.3", default-features = false, features = ["allo
 js-sys  = { version = "0.3", default-features = false }
 web-sys = { version = "0.3", features = [
     "Window", "Document", "HtmlElement", "HtmlInputElement", "HtmlCanvasElement", "File", "FileList",
-    "Event", "EventTarget", "Blob", "Request", "RequestInit", "Response", "Headers", "CanvasRenderingContext2d", "TextMetrics",
+    "Event", "EventTarget", "Blob", "Request", "RequestInit", "Response", "Headers", "CanvasRenderingContext2d",
+    "TextMetrics", "Storage",
 ] }
 once_cell = { version = "1.21.3", default-features = false }
 console_log = { version = "1.0.0", default-features = false }
@@ -30,6 +31,8 @@ log = { version = "0.4.27", default-features = false }
 anyhow = "1.0.98"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
+gloo-net = "0.6.0"
+base64 = "0.22.1"
 
 [lib]
 crate-type = ["cdylib"]

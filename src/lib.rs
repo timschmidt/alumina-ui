@@ -1385,12 +1385,14 @@ fn load_mesh_from_bytes(bytes: &[u8]) -> Option<Mesh<()>> {
 pub async fn start() -> Result<(), JsValue> {
     console_log::init_with_level(Level::Debug).expect("failed to init logger");
 
-	// Kick off font collection
-    let inv = fonts::collect_available_fonts().await;
-    log::info!("[alumina] detected {} fonts", inv.families.len());
-    for f in &inv.families {
-        log::debug!("  font: {f}");
-    }
+	// Optionally fetch the Google Fonts index at startup (or on first use).
+	// Replace with your real API key (read-only metadata).
+	//
+	// let all = fonts::gf_fetch_index("YOUR-API-KEY").await?;
+	// log::info!("[alumina] google fonts: {} families", all.len());
+	// for f in all.iter().take(10) {
+	//     log::debug!("  {}", f.family);
+	// }
 
     let web_options = eframe::WebOptions::default();
 
