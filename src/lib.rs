@@ -1166,7 +1166,7 @@ impl eframe::App for AluminaApp {
 
 					// ─────────────── Top half: graph ───────────────
 					ui.allocate_ui(egui::vec2(total.x, half_h), |ui| {
-						ui.heading("Graph data output");
+						ui.heading("Graph");
 						ui.add_space(4.0);
 
 						Plot::new("diag_plot")
