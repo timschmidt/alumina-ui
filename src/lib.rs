@@ -1237,21 +1237,36 @@ impl eframe::App for AluminaApp {
                     });
 
                 egui::CentralPanel::default().show(ctx, |ui| {
-                    ui.set_min_size(ui.available_size());
-                    let resp = self.design_state.draw_graph_editor(
-                        ui,
-                        AllTemplates,
-                        &mut self.design_user_state,
-                        Vec::<
-                            egui_node_graph2::NodeResponse<
-                                design_graph::EmptyUserResponse,
-                                design_graph::NodeData,
-                            >,
-                        >::new(),
-                    );
-                    // (no special per-node responses needed)
-                    _ = resp;
-                });
+					ui.set_min_size(ui.available_size());
+
+					// Check if the graph is empty before drawing (no nodes/ports yet)
+					let graph_is_empty =
+						self.design_state.graph.inputs.is_empty() && self.design_state.graph.outputs.is_empty();
+
+					let resp = self.design_state.draw_graph_editor(
+						ui,
+						AllTemplates,
+						&mut self.design_user_state,
+						Vec::<egui_node_graph2::NodeResponse<
+							design_graph::EmptyUserResponse,
+							design_graph::NodeData,
+						>>::new(),
+					);
+					_ = resp;
+
+					// Overlay hint when no nodes are present
+					if graph_is_empty {
+						let rect = ui.max_rect();
+						let painter = ui.painter();
+						painter.text(
+							rect.center(),
+							egui::Align2::CENTER_CENTER,
+							"Right-click to open menu",
+							egui::FontId::proportional(18.0),
+							ui.visuals().weak_text_color(),
+						);
+					}
+				});
             }
         }
     }
