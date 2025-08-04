@@ -22,7 +22,7 @@ trunk serve --open --release
 
 ## Todo
 - implement picking for lines and vertices
-- https://github.com/JeroenGar/jagua-rs for bin packing
+- https://github.com/JeroenGar/jagua-rs and/or https://github.com/JeroenGar/sparrow for bin packing
 - generate toolpaths from slices
 - send toolpaths to firmware
 - implement SD card support
