@@ -1160,29 +1160,31 @@ impl eframe::App for AluminaApp {
 					});
 
                 egui::CentralPanel::default().show(ctx, |ui| {
-					ui.vertical(|ui| {
-						// -------------------------
-						// Graph data output (2D plot)
-						// -------------------------
+					// Split the available space into two equal vertical regions
+					let total = ui.available_size();
+					let half_h = total.y / 2.0;
+
+					// ─────────────── Top half: graph ───────────────
+					ui.allocate_ui(egui::vec2(total.x, half_h), |ui| {
 						ui.heading("Graph data output");
 						ui.add_space(4.0);
 
 						Plot::new("diag_plot")
-							.height(220.0)
-							.view_aspect(2.0) // wider than tall
+							.width(ui.available_width())        // fill width
+							.height(ui.available_height())      // fill the rest of this half
+							// .view_aspect(2.0)                // remove fixed aspect
 							.show(ui, |plot_ui| {
 								if !self.diag_plot_data.is_empty() {
 									let points = PlotPoints::from(self.diag_plot_data.clone());
 									plot_ui.line(Line::new(points).name("Diagnostics series"));
 								}
-								// If empty, we just show axes — data will be wired up later.
 							});
+					});
 
-						ui.separator();
+					ui.add_space(4.0); // optional tiny gap between halves
 
-						// -------------
-						// Console output
-						// -------------
+					// ───────────── Bottom half: console ─────────────
+					ui.allocate_ui(egui::vec2(total.x, half_h), |ui| {
 						ui.horizontal(|ui| {
 							ui.heading("Console");
 							if ui.button("Clear").clicked() {
@@ -1190,15 +1192,14 @@ impl eframe::App for AluminaApp {
 							}
 						});
 
+						// Make the log fill the remainder of this half
 						egui::ScrollArea::vertical()
 							.stick_to_bottom(true)
 							.show(ui, |ui| {
-								// Read-only text area that grows with content
 								let te = egui::TextEdit::multiline(&mut self.diag_console)
 									.desired_width(f32::INFINITY)
-									.desired_rows(10)
 									.interactive(false);
-								ui.add(te);
+								ui.add_sized(ui.available_size(), te);
 							});
 					});
 				});
