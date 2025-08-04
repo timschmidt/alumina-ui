@@ -1045,8 +1045,8 @@ impl eframe::App for AluminaApp {
                                 UnitQuaternion::from_axis_angle(&Vector3::y_axis(), yaw)
                                     * UnitQuaternion::from_axis_angle(&Vector3::x_axis(), pitch)
                                     * self.rotation;
-                        } else if input.pointer.secondary_down() {
-                            // right‑drag → pan
+                        } else if input.pointer.middle_down() {
+                            // middle‑drag → pan
                             self.translation += -delta;
                         }
                     }
