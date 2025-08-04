@@ -265,6 +265,17 @@ impl AluminaApp {
             design_user_state: UserState::default(),
         }
     }
+    
+    /// Ensure `selected_model` is within bounds or `None` if there are no models.
+    fn clamp_selection(&mut self) {
+        if self.models.is_empty() {
+            self.selected_model = None;
+        } else if let Some(i) = self.selected_model {
+            if i >= self.models.len() {
+                self.selected_model = Some(self.models.len() - 1);
+            }
+        }
+    }
 
     /// Refresh *all* models (each entry decides whether it needs to rebuild).
     fn refresh_models(&mut self) {
@@ -294,17 +305,17 @@ impl AluminaApp {
 
     /// Marks `model` as dirty so that next frame will rebuild
     fn invalidate_selected_model(&mut self) {
-        if let Some(idx) = self.selected_model {
-            self.models[idx].applied_scale = INVALID_SCALE;
-            self.models[idx].applied_offset = Vector3::repeat(f32::NAN);
+        if let Some(m) = self.sel_mut() {
+            m.applied_scale = INVALID_SCALE;
+            m.applied_offset = Vector3::repeat(f32::NAN);
         }
     }
 
     /// Replace currently-selected entry’s *base* geometry.
     fn set_selected_base(&mut self, mesh: Mesh<()>, name: String) {
-        if let Some(idx) = self.selected_model {
-            self.models[idx].base = mesh;
-            self.models[idx].name = name;
+        if let Some(m) = self.sel_mut() {
+            m.base = mesh;
+            m.name = name;
             self.invalidate_selected_model();
             self.refresh_models();
             self.refresh_slice();
@@ -604,11 +615,7 @@ impl eframe::App for AluminaApp {
                         }
                         if let Some(idx) = remove {
                             self.models.remove(idx);
-                            if let Some(selected) = &mut self.selected_model {
-                                if *selected >= idx {
-                                    *selected = selected.saturating_sub(1);
-                                }
-                            }
+                            self.clamp_selection();
                         }
 
                         ui.separator();
@@ -653,9 +660,7 @@ impl eframe::App for AluminaApp {
                         ui.separator();
                         ui.collapsing("Model scale", |ui| {
                             // --- 1. borrow models[idx] once --------------------
-                            if let Some(idx) = self.selected_model {
-                                let m = &mut self.models[idx];
-
+                            if let Some(m) = self.sel_mut() {
                                 // Track whether any DragValue changed
                                 let mut changed = false;
 
@@ -708,9 +713,7 @@ impl eframe::App for AluminaApp {
                         // ────────────── Position Controls ──────────────
                         ui.separator();
                         ui.collapsing("Model position", |ui| {
-                            if let Some(idx) = self.selected_model {
-                                let m = &mut self.models[idx];
-
+                            if let Some(m) = self.sel_mut() {
                                 let mut changed = false;
 
                                 if ui.button("Float (Z = 0)").clicked() {
