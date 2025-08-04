@@ -26,7 +26,6 @@ trunk serve --open --release
 - generate toolpaths from slices
 - send toolpaths to firmware
 - implement SD card support
-- create oscope 2D plot on Diagnostic tab
 - enable persistence via https://docs.rs/eframe/latest/eframe/
 - implement tweening for snap view
 - implement pinch to zoom and something for dragging on mobile

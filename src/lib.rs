@@ -7,6 +7,7 @@ use crate::design_graph::{AllTemplates, UserState};
 use csgrs::{mesh::Mesh, sketch::Sketch, traits::CSG};
 use eframe::egui;
 use egui_node_graph2::GraphEditorState;
+use egui_plot::{Plot, PlotPoints, Line};
 use futures_channel::oneshot;
 use geo::{Geometry, LineString};
 use glow::HasContext as _;
@@ -200,6 +201,8 @@ pub struct AluminaApp {
         UserState,
     >,
     design_user_state: UserState,
+    diag_console: String, // Text console buffer (read-only UI)
+    diag_plot_data: Vec<[f64; 2]>, // XY points for the 2D plot
 }
 
 impl AluminaApp {
@@ -263,6 +266,8 @@ impl AluminaApp {
             peel_distance: 15.0,
             design_state: GraphEditorState::default(),
             design_user_state: UserState::default(),
+            diag_console: String::new(),
+			diag_plot_data: Vec::new(),
         }
     }
     
@@ -335,6 +340,14 @@ impl AluminaApp {
         self.models.push(e);
         self.selected_model = Some(self.models.len() - 1);
         self.refresh_slice();
+    }
+    
+    fn diag_log(&mut self, line: impl Into<String>) {
+        if !self.diag_console.is_empty() { self.diag_console.push('\n'); }
+        self.diag_console.push_str(&line.into());
+    }
+    fn diag_push_point(&mut self, x: f64, y: f64) {
+        self.diag_plot_data.push([x, y]);
     }
 }
 
@@ -1146,9 +1159,49 @@ impl eframe::App for AluminaApp {
 						gpio_row("D13",&mut self.diag_d13,"d13_high","d13_low",ui);
 					});
 
-                egui::CentralPanel::default().show(ctx, |_| {
-                    // (optional) placeholder – nothing rendered for now
-                });
+                egui::CentralPanel::default().show(ctx, |ui| {
+					ui.vertical(|ui| {
+						// -------------------------
+						// Graph data output (2D plot)
+						// -------------------------
+						ui.heading("Graph data output");
+						ui.add_space(4.0);
+
+						Plot::new("diag_plot")
+							.height(220.0)
+							.view_aspect(2.0) // wider than tall
+							.show(ui, |plot_ui| {
+								if !self.diag_plot_data.is_empty() {
+									let points = PlotPoints::from(self.diag_plot_data.clone());
+									plot_ui.line(Line::new(points).name("Diagnostics series"));
+								}
+								// If empty, we just show axes — data will be wired up later.
+							});
+
+						ui.separator();
+
+						// -------------
+						// Console output
+						// -------------
+						ui.horizontal(|ui| {
+							ui.heading("Console");
+							if ui.button("Clear").clicked() {
+								self.diag_console.clear();
+							}
+						});
+
+						egui::ScrollArea::vertical()
+							.stick_to_bottom(true)
+							.show(ui, |ui| {
+								// Read-only text area that grows with content
+								let te = egui::TextEdit::multiline(&mut self.diag_console)
+									.desired_width(f32::INFINITY)
+									.desired_rows(10)
+									.interactive(false);
+								ui.add(te);
+							});
+					});
+				});
             }
 
             Tab::Design => {

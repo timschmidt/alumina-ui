@@ -76,6 +76,7 @@ dependencies = [
  "egui",
  "egui_glow",
  "egui_node_graph2",
+ "egui_plot",
  "futures-channel",
  "geo",
  "gloo-net",
@@ -840,6 +841,17 @@ dependencies = [
  "slotmap",
  "smallvec",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "egui_plot"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c226cae80a6ee10c4d3aaf9e33bd9e9b2f1c0116b6036bdc2a1cfc9d2d0dcc10"
+dependencies = [
+ "ahash",
+ "egui",
+ "emath",
 ]
 
 [[package]]
