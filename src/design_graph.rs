@@ -2,6 +2,8 @@ use csgrs::{mesh::Mesh, mesh::plane::Plane, sketch::Sketch, traits::CSG};
 use egui::{self, DragValue};
 use egui_node_graph2::*;
 use nalgebra::{Point3, Vector3};
+use crate::fonts;
+
 #[derive(Clone, Debug)]
 pub struct EmptyUserResponse;
 
@@ -14,6 +16,7 @@ pub enum DType {
     Sketch,
     Scalar,
     Vec3,
+    Text,
 }
 
 /// Run-time value carried by a port when the graph is evaluated.
@@ -23,6 +26,7 @@ pub enum DValue {
     Sketch(Sketch<()>),
     Scalar(f64),
     Vec3(Vector3<f64>),
+    Text(String),
 }
 
 impl Default for DValue {
@@ -122,7 +126,7 @@ pub enum Template {
     SchwarzP,
     SchwarzD,
     /* ---- Text ---- */
-    //Text,
+    TruetypeText,
 }
 
 impl Default for Template {
@@ -165,6 +169,7 @@ impl DataTypeTrait<UserState> for DType {
             DType::Sketch => egui::Color32::from_rgb(120, 180, 120),
             DType::Scalar => egui::Color32::from_rgb(38, 109, 211),
             DType::Vec3 => egui::Color32::from_rgb(238, 207, 109),
+            DType::Text => egui::Color32::from_rgb(200, 160, 240),
         }
     }
     fn name(&self) -> std::borrow::Cow<'_, str> {
@@ -173,6 +178,7 @@ impl DataTypeTrait<UserState> for DType {
             DType::Sketch => "sketch".into(),
             DType::Scalar => "scalar".into(),
             DType::Vec3 => "vec3".into(),
+            DType::Text => "text".into(),
         }
     }
 }
@@ -217,6 +223,21 @@ fn sketch_in(g: &mut Graph<NodeData, DType, DValue>, id: NodeId, name: &str) {
         DType::Sketch,
         DValue::default(),
         InputParamKind::ConnectionOnly,
+        true,
+    );
+}
+fn text_in(
+    g: &mut Graph<NodeData, DType, DValue>,
+    id: NodeId,
+    name: &str,
+    def: &str,
+) {
+    g.add_input_param(
+        id,
+        name.into(),
+        DType::Text,
+        DValue::Text(def.to_owned()),
+        InputParamKind::ConnectionOrConstant,
         true,
     );
 }
@@ -324,7 +345,7 @@ impl NodeTemplateTrait for Template {
             Gyroid => "Gyroid".into(),
             SchwarzP => "Schwarz P".into(),
             SchwarzD => "Schwarz D".into(),
-            //Text=>"Text".into(),
+            TruetypeText=>"TrueType text".into(),
         }
     }
     fn node_finder_categories(&self, _: &mut UserState) -> Vec<Self::CategoryType> {
@@ -333,7 +354,7 @@ impl NodeTemplateTrait for Template {
             Square | Rectangle | Circle | RoundedRectangle | Ellipse | RegularNgon
             | RightTriangle | Trapezoid | Star | TeardropSketch | EggSketch | Squircle
             | Keyhole | Reuleaux | Ring | PieSlice | Supershape | CircleWithKeyway
-            | CircleWithFlat | CircleWithTwoFlats | Heart | Crescent | AirfoilNaca4 => {
+            | CircleWithFlat | CircleWithTwoFlats | Heart | Crescent | AirfoilNaca4 | TruetypeText => {
                 vec!["2D / Sketch"]
             }
             //CircleWithFlat|CircleWithTwoFlats|Heart|Crescent|AirfoilNaca4|Text => vec!["2D / Sketch"],
@@ -524,6 +545,14 @@ impl NodeTemplateTrait for Template {
                 scalar_in(g, id, "samples", 64.0);
                 sketch_out(g, id, "out");
             }
+            TruetypeText => {
+				// String inputs for content and font selection
+				text_in(g, id, "text", "Hello, world!");
+				text_in(g, id, "font_family", "");   // search-as-you-type, or pick from dropdown
+				text_in(g, id, "variant", "regular"); // default variant
+				scalar_in(g, id, "height_mm", 20.0); // text cap height (mm)
+				sketch_out(g, id, "out");
+			}
 
             /* ---- mesh primitives ---- */
             Cube => {
@@ -809,6 +838,7 @@ impl NodeTemplateIter for AllTemplates {
             Heart,
             Crescent,
             AirfoilNaca4,
+            TruetypeText,
             //Text,
 
             /* mesh */
@@ -880,7 +910,7 @@ impl WidgetValueTrait for DValue {
         _node_id: NodeId,
         ui: &mut egui::Ui,
         _user_state: &mut UserState,
-        _node_data: &NodeData,
+        node_data: &NodeData,
     ) -> Vec<Self::Response> {
         match self {
             DValue::Scalar(x) => {
@@ -905,6 +935,70 @@ impl WidgetValueTrait for DValue {
             }
             DValue::Mesh(_) => {
                 ui.label("mesh");
+            }
+            DValue::Text(s) => {
+                // Plain editor for generic text fields:
+                let is_truetype = matches!(node_data.template, Template::TruetypeText);
+                let is_family   = is_truetype && name == "font_family";
+                let is_variant  = is_truetype && name == "variant";
+
+                ui.horizontal(|ui| {
+                    ui.label(name);
+                    ui.text_edit_singleline(s);
+                });
+
+                // For truetype: show a persisted-font dropdown (localStorage)
+                if is_family {
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        if let Ok(list) = fonts::list_persisted_ttf() {
+                            // Unique, sorted family names:
+                            let mut families: Vec<String> =
+                                list.into_iter().map(|p| p.family).collect();
+                            families.sort();
+                            families.dedup();
+
+                            // Filter by the current text (acts as a search query)
+                            let query = s.to_ascii_lowercase();
+                            let filtered = families.into_iter()
+                                .filter(|f| f.to_ascii_lowercase().contains(&query))
+                                .collect::<Vec<_>>();
+
+                            egui::ComboBox::from_id_salt("ttf_family_combo")
+								.selected_text(if s.is_empty() { "(pick font)" } else { s.as_str() }) // <-- &str, not String
+								.show_ui(ui, |ui| {
+									for fam in &filtered {
+										if ui.selectable_label(s == fam, fam).clicked() {
+											*s = fam.clone();
+										}
+									}
+								});
+                        } else {
+                            ui.small("No persisted fonts found (localStorage).");
+                        }
+                    }
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        ui.small("Font picker available on web build (wasm32).");
+                    }
+                }
+
+                // For truetype: offer a common-variant dropdown; default "regular"
+                if is_variant {
+                    // Offer a small curated list if user hasn't typed anything:
+                    let choices = ["regular", "italic", "700", "700italic"];
+                    let current = if s.is_empty() { "regular" } else { s.as_str() };
+					egui::ComboBox::from_id_salt("ttf_variant_combo")
+						.selected_text(current) // &str
+						.show_ui(ui, |ui| {
+							for c in ["regular", "italic", "700", "700italic"] {
+								if ui.selectable_label(s == c, c).clicked() {
+									s.clear();
+									s.push_str(c);
+								}
+							}
+						});
+                }
             }
         }
         Vec::new()
@@ -1159,6 +1253,33 @@ fn eval_rec(graph: &GraphT, out: OutputId, cache: &mut Cache) -> anyhow::Result<
                 None,
             ))
         }
+        TruetypeText => {
+			let content = get("text")?.text()?;
+			let family  = get("font_family")?.text()?.trim().to_owned();
+			let variant = get("variant")?.text()?;
+			let height  = get("height_mm")?.scalar()?;
+
+			// Load persisted bytes for (family, variant)
+			#[cfg(target_arch = "wasm32")]
+			{
+				let maybe_bytes = fonts::load_persisted_ttf(&family, &variant)
+					.map_err(|e| anyhow::anyhow!("load_persisted_ttf failed: {:?}", e))?;
+				match maybe_bytes {
+					Some(bytes) => {
+						// Call into csgrs: Sketch::truetype_text(ttf_bytes, text, height_mm, None)
+						// If your csgrs signature differs, adjust here accordingly.
+						DValue::Sketch(Sketch::text(&content, &bytes, height.into(), None))
+					}
+					None => {
+						anyhow::bail!("No persisted TTF for \"{family}:{variant}\". Pick a font that’s saved to localStorage.");
+					}
+				}
+			}
+			#[cfg(not(target_arch = "wasm32"))]
+			{
+				anyhow::bail!("TrueType text requires web build (wasm32) with persisted fonts.");
+			}
+		}
 
         /* ---- mesh primitives ---- */
         ,
@@ -1523,6 +1644,7 @@ trait AsTyped {
     fn vec3(self) -> anyhow::Result<Vector3<f64>>;
     fn mesh(self) -> anyhow::Result<Mesh<()>>;
     fn sketch(self) -> anyhow::Result<Sketch<()>>;
+    fn text(self) -> anyhow::Result<String>;
 }
 impl AsTyped for DValue {
     fn scalar(self) -> anyhow::Result<f64> {
@@ -1552,5 +1674,8 @@ impl AsTyped for DValue {
         } else {
             anyhow::bail!("expected sketch")
         }
+    }
+    fn text(self) -> anyhow::Result<String> {
+        if let DValue::Text(s) = self { Ok(s) } else { anyhow::bail!("expected text") }
     }
 }
