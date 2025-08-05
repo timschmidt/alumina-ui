@@ -1083,11 +1083,11 @@ impl eframe::App for AluminaApp {
 					// get the existing scroll-to-zoom behaviour because wheels
 					// never generate an X component in practice.
 					//-------------------------------------------------------------
-					let scroll_vec = ui.input(|i| i.raw_scroll_delta);
-					if scroll_vec.x.abs() > 0.0 || scroll_vec.y.abs() > 0.0 {
-						// For a natural feel, match the finger direction: we invert Y.
-						self.translation += egui::vec2(-scroll_vec.x, scroll_vec.y);
-					}
+					//let scroll_vec = ui.input(|i| i.raw_scroll_delta);
+					//if scroll_vec.x.abs() > 0.0 || scroll_vec.y.abs() > 0.0 {
+					//	// For a natural feel, match the finger direction: we invert Y.
+					//	self.translation += egui::vec2(-scroll_vec.x, scroll_vec.y);
+					//}
 
                     // scroll → zoom
                     let scroll = ui.input(|i| i.raw_scroll_delta.y);

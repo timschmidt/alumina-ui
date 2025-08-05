@@ -28,5 +28,4 @@ trunk serve --open --release
 - implement SD card support
 - enable persistence via https://docs.rs/eframe/latest/eframe/
 - implement tweening for snap view
-- implement pinch to zoom and something for dragging on mobile
 - ensure font picker in truetype text node works / gets pre-populated
