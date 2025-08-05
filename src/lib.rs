@@ -206,7 +206,7 @@ pub struct AluminaApp {
 }
 
 impl AluminaApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {		
         let mut entry =
             ModelEntry::new("icosahedron", Mesh::<()>::icosahedron(100.0, None).float());
         entry.refresh();
@@ -1063,6 +1063,31 @@ impl eframe::App for AluminaApp {
                             self.translation += -delta;
                         }
                     }
+                    
+                    //-------------------------------------------------------------
+					// ✨ 1. Pinch-to-zoom (egui 0.23+ synthesises this for us)
+					//-------------------------------------------------------------
+					let pinch = ui.input(|i| i.zoom_delta());
+					// `zoom_delta` is multiplicative: 1.0 == no change.
+					if (pinch - 1.0).abs() > f32::EPSILON {
+						// >1  → fingers move apart → zoom-in (move camera closer)
+						// <1  → fingers pinch      → zoom-out
+						self.zoom = (self.zoom / pinch).clamp(0.1, 500.0);
+					}
+
+					//-------------------------------------------------------------
+					// ✨ 2. Two-/three-finger pan
+					//
+					// Track-pads send a “scroll” gesture for multi-finger drags.
+					// We treat that *vector* as a pan.  Mouse-wheel users still
+					// get the existing scroll-to-zoom behaviour because wheels
+					// never generate an X component in practice.
+					//-------------------------------------------------------------
+					let scroll_vec = ui.input(|i| i.raw_scroll_delta);
+					if scroll_vec.x.abs() > 0.0 || scroll_vec.y.abs() > 0.0 {
+						// For a natural feel, match the finger direction: we invert Y.
+						self.translation += egui::vec2(-scroll_vec.x, scroll_vec.y);
+					}
 
                     // scroll → zoom
                     let scroll = ui.input(|i| i.raw_scroll_delta.y);
