@@ -203,6 +203,8 @@ pub struct AluminaApp {
     design_user_state: UserState,
     diag_console: String, // Text console buffer (read-only UI)
     diag_plot_data: Vec<[f64; 2]>, // XY points for the 2D plot
+    diag_last_sample: Arc<Mutex<Option<f64>>>,
+	last_poll_ms: f64,
 }
 
 impl AluminaApp {
@@ -268,6 +270,8 @@ impl AluminaApp {
             design_user_state: UserState::default(),
             diag_console: String::new(),
 			diag_plot_data: Vec::new(),
+			diag_last_sample: Arc::new(Mutex::new(None)),
+			last_poll_ms: 0.0,
         }
     }
     
@@ -349,6 +353,23 @@ impl AluminaApp {
     fn diag_push_point(&mut self, x: f64, y: f64) {
         self.diag_plot_data.push([x, y]);
     }
+    
+    fn poll_time_once(target: Arc<Mutex<Option<f64>>>) {
+		execute(async move {
+			match http_get_text("/time").await {
+				Ok(body) => {
+					// Expect "Time: N", but be forgiving:
+					let num = body.chars()
+						.filter(|c| c.is_ascii_digit() || *c=='.')
+						.collect::<String>();
+					if let Ok(v) = num.parse::<f64>() {
+						*target.lock().unwrap() = Some(v);
+					}
+				}
+				Err(e) => log::error!("poll /time failed: {:?}", e),
+			}
+		});
+	}
 }
 
 impl AluminaApp {
@@ -990,10 +1011,10 @@ impl eframe::App for AluminaApp {
                                 &["stl", "dxf"],
                             );
                         }
-                        if ui.button("send").clicked() {
-                            // TODO: implement send action
-                            log::info!("'send' button pressed");
-                        }
+                        if ui.button("send").clicked(){
+							// existing firmware case matches "g0"
+							send_queue_command("g0");
+						}
                         if ui.button("toggle").clicked() {
                             // Example: toggle wireframe state when this button is pressed
                             self.wireframe = !self.wireframe;
@@ -1153,6 +1174,16 @@ impl eframe::App for AluminaApp {
                     .show(ctx, |ui| {
                         ui.heading("Diagnostics");
                         ui.separator();
+                        ui.horizontal(|ui| {
+							if ui.button("Scan Wi-Fi").clicked() {
+								send_queue_command("scan_wifi");
+							}
+							if ui.button("Set Wi-Fi").clicked() {
+								// current firmware just logs;
+								send_queue_command("set_wifi");
+							}
+						});
+                        ui.separator();
                         ui.checkbox(&mut self.diag_poll,"Poll");
 						if ui.checkbox(&mut self.diag_led,"Status LED").changed(){
 							if self.diag_led { send_queue_command("status_on"); }
@@ -1185,6 +1216,28 @@ impl eframe::App for AluminaApp {
 					});
 
                 egui::CentralPanel::default().show(ctx, |ui| {
+					if self.diag_poll {
+						if let Some(perf) = web_sys::window().and_then(|w| w.performance()) {
+							let now = perf.now();
+							if now - self.last_poll_ms > 200.0 {
+								self.last_poll_ms = now;
+								Self::poll_time_once(Arc::clone(&self.diag_last_sample));
+							}
+						}
+					}
+
+					// Extract the sample without holding the guard across &mut self calls
+					let sample = {
+						let mut guard = self.diag_last_sample.lock().unwrap();
+						guard.take()
+					};
+
+					if let Some(sample) = sample {
+						let t = (web_sys::window().and_then(|w| w.performance()).map(|p| p.now()).unwrap_or(0.0)) / 1000.0;
+						self.diag_push_point(t as f64, sample);
+						self.diag_log(format!("time = {}", sample));
+					}
+					
 					// Split the available space into two equal vertical regions
 					let total = ui.available_size();
 					let half_h = total.y / 2.0;
@@ -1214,6 +1267,14 @@ impl eframe::App for AluminaApp {
 							ui.heading("Console");
 							if ui.button("Clear").clicked() {
 								self.diag_console.clear();
+							}
+							if ui.button("Refresh queue").clicked() {
+								execute(async {
+									match http_get_text("/queue").await {
+										Ok(s) => log::info!("/queue: {}", s),
+										Err(e) => log::error!("GET /queue failed: {:?}", e),
+									}
+								});
 							}
 						});
 
@@ -1464,6 +1525,17 @@ fn send_queue_command(cmd:&'static str){
             let _resp:Response=val.dyn_into().unwrap();
         }
     });
+}
+
+/// GET a text endpoint and return the body as String.
+async fn http_get_text(path: &str) -> Result<String, JsValue> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    let window = web_sys::window().ok_or(JsValue::from_str("no window"))?;
+    let resp_val = JsFuture::from(window.fetch_with_str(path)).await?;
+    let resp: web_sys::Response = resp_val.dyn_into()?;
+    let text = JsFuture::from(resp.text()?).await?;
+    text.as_string().ok_or(JsValue::from_str("no text"))
 }
 
 fn load_mesh_from_bytes(bytes: &[u8]) -> Option<Mesh<()>> {
