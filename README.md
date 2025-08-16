@@ -29,3 +29,4 @@ trunk serve --open --release
 - enable persistence via https://docs.rs/eframe/latest/eframe/
 - implement tweening for snap view
 - ensure font picker in truetype text node works / gets pre-populated
+- ensure pin logging works for OUTPUT and INPUT modes and reports apropriately per-pin

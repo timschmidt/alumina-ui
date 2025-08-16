@@ -16,7 +16,7 @@ use log::Level;
 use nalgebra::{Matrix4, Perspective3, Point3, Translation3, UnitQuaternion, Vector3};
 use std::{
     cell::RefCell,
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     f32::consts::{FRAC_PI_2, PI},
     future::Future,
     rc::Rc,
@@ -202,8 +202,10 @@ pub struct AluminaApp {
     >,
     design_user_state: UserState,
     diag_console: String, // Text console buffer (read-only UI)
-    diag_plot_data: Vec<[f64; 2]>, // XY points for the 2D plot
-    diag_last_sample: Arc<Mutex<Option<f64>>>,
+	// Per-pin series: "D0", "D1", ...
+    diag_series: HashMap<String, Vec<[f64;2]>>,
+    // Latest sample from /pins (name -> 0.0/1.0)
+    diag_last_pins: Arc<Mutex<Option<HashMap<String, f64>>>>,
 	last_poll_ms: f64,
 }
 
@@ -269,8 +271,8 @@ impl AluminaApp {
             design_state: GraphEditorState::default(),
             design_user_state: UserState::default(),
             diag_console: String::new(),
-			diag_plot_data: Vec::new(),
-			diag_last_sample: Arc::new(Mutex::new(None)),
+			diag_series: HashMap::new(),
+			diag_last_pins: Arc::new(Mutex::new(None)),
 			last_poll_ms: 0.0,
         }
     }
@@ -350,25 +352,48 @@ impl AluminaApp {
         if !self.diag_console.is_empty() { self.diag_console.push('\n'); }
         self.diag_console.push_str(&line.into());
     }
-    fn diag_push_point(&mut self, x: f64, y: f64) {
-        self.diag_plot_data.push([x, y]);
+    fn diag_push_point_named(&mut self, name: &str, x: f64, y: f64) {
+        self.diag_series.entry(name.to_string()).or_default().push([x, y]);
+    }
+
+    /// Kick one async GET /pins, store as HashMap<String, f64> in `target`.
+    fn poll_pins_once(target: Arc<Mutex<Option<HashMap<String, f64>>>>) {
+        execute(async move {
+            match http_get_text("/pins").await {
+                Ok(body) => {
+                    // Expect shape: {"D0":0, "D1":1, ...}
+                    let parsed: Result<HashMap<String, f64>, _> = serde_json::from_str::<HashMap<String, serde_json::Value>>(&body)
+                        .map(|m| {
+                            m.into_iter()
+                                .filter_map(|(k, v)| v.as_f64().or_else(|| v.as_u64().map(|u| u as f64)).map(|f| (k, f)))
+                                .collect()
+                        });
+                    match parsed {
+                        Ok(map) => { *target.lock().unwrap() = Some(map); }
+                        Err(e) => log::error!("parse /pins failed: {:?}", e),
+                    }
+                }
+                Err(e) => log::error!("poll /pins failed: {:?}", e),
+            }
+        });
     }
     
-    fn poll_time_once(target: Arc<Mutex<Option<f64>>>) {
-		execute(async move {
-			match http_get_text("/time").await {
-				Ok(body) => {
-					// Expect "Time: N", but be forgiving:
-					let num = body.chars()
-						.filter(|c| c.is_ascii_digit() || *c=='.')
-						.collect::<String>();
-					if let Ok(v) = num.parse::<f64>() {
-						*target.lock().unwrap() = Some(v);
-					}
-				}
-				Err(e) => log::error!("poll /time failed: {:?}", e),
-			}
-		});
+    fn is_pin_checked(&self, name: &str) -> bool {
+        match name {
+            "D0"  => self.diag_d0,
+            "D1"  => self.diag_d1,
+            "D2"  => self.diag_d2,
+            "D3"  => self.diag_d3,
+            "D4"  => self.diag_d4,
+            "D5"  => self.diag_d5,
+            "D6"  => self.diag_d6,
+            "D7"  => self.diag_d7,
+            "D9"  => self.diag_d9,
+            "D11" => self.diag_d11,
+            "D12" => self.diag_d12,
+            "D13" => self.diag_d13,
+            _ => false,
+        }
 	}
 }
 
@@ -1216,26 +1241,30 @@ impl eframe::App for AluminaApp {
 					});
 
                 egui::CentralPanel::default().show(ctx, |ui| {
+					// Periodic sampler (~5 Hz)
 					if self.diag_poll {
 						if let Some(perf) = web_sys::window().and_then(|w| w.performance()) {
 							let now = perf.now();
 							if now - self.last_poll_ms > 200.0 {
 								self.last_poll_ms = now;
-								Self::poll_time_once(Arc::clone(&self.diag_last_sample));
+								Self::poll_pins_once(Arc::clone(&self.diag_last_pins));
 							}
 						}
 					}
-
-					// Extract the sample without holding the guard across &mut self calls
-					let sample = {
-						let mut guard = self.diag_last_sample.lock().unwrap();
-						guard.take()
-					};
-
-					if let Some(sample) = sample {
+					// Apply the latest sample to series and console
+					if let Some(pins) = { let mut g = self.diag_last_pins.lock().unwrap(); g.take() } {
 						let t = (web_sys::window().and_then(|w| w.performance()).map(|p| p.now()).unwrap_or(0.0)) / 1000.0;
-						self.diag_push_point(t as f64, sample);
-						self.diag_log(format!("time = {}", sample));
+						// Only track pins the user has "checked"
+						let mut line = format!("t={:.02}s ", t);
+						for (name, val) in pins.iter() {
+							if self.is_pin_checked(name) {
+								self.diag_push_point_named(name, t as f64, *val);
+								line.push_str(&format!(" {}={}", name, *val as i32));
+							}
+						}
+						if line.trim() != "t=0.00s" {
+							self.diag_log(line);
+						}
 					}
 					
 					// Split the available space into two equal vertical regions
@@ -1246,15 +1275,16 @@ impl eframe::App for AluminaApp {
 					ui.allocate_ui(egui::vec2(total.x, half_h), |ui| {
 						ui.heading("Graph");
 						ui.add_space(4.0);
-
 						Plot::new("diag_plot")
-							.width(ui.available_width())        // fill width
-							.height(ui.available_height())      // fill the rest of this half
-							// .view_aspect(2.0)                // remove fixed aspect
+							.width(ui.available_width())
+							.height(ui.available_height())
 							.show(ui, |plot_ui| {
-								if !self.diag_plot_data.is_empty() {
-									let points = PlotPoints::from(self.diag_plot_data.clone());
-									plot_ui.line(Line::new(points).name("Diagnostics series"));
+								// Draw a series per *checked* pin that has data
+								for (name, series) in &self.diag_series {
+									if self.is_pin_checked(name) && !series.is_empty() {
+										let points = PlotPoints::from(series.clone());
+										plot_ui.line(Line::new(points).name(name.clone()));
+									}
 								}
 							});
 					});
@@ -1267,6 +1297,7 @@ impl eframe::App for AluminaApp {
 							ui.heading("Console");
 							if ui.button("Clear").clicked() {
 								self.diag_console.clear();
+								self.diag_series.clear();
 							}
 							if ui.button("Refresh queue").clicked() {
 								execute(async {
