@@ -21,12 +21,16 @@ trunk serve --open --release
 ```
 
 ## Todo
-- implement picking for lines and vertices
+- implement picking for lines and vertices and faces
+- single-click for individuals and click-drag for multiples.
 - https://github.com/JeroenGar/jagua-rs and/or https://github.com/JeroenGar/sparrow for bin packing
 - generate toolpaths from slices
 - send toolpaths to firmware
-- implement SD card support
+- echo sent / received commands in Diagnostics console
+- finish SD card support
 - enable persistence via https://docs.rs/eframe/latest/eframe/
 - implement tweening for snap view
 - ensure font picker in truetype text node works / gets pre-populated
 - ensure pin logging works for OUTPUT and INPUT modes and reports apropriately per-pin
+- create architecture graphic
+- API documentation
