@@ -34,5 +34,5 @@ trunk serve --open --release
 - implement tweening for snap view
 - ensure font picker in truetype text node works / gets pre-populated
 - ensure pin logging works for OUTPUT and INPUT modes and reports apropriately per-pin
-- create architecture graphic
+- add SD, command stream to architecture graphic
 - API documentation
