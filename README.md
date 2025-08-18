@@ -4,7 +4,7 @@ Alumina is an integrated CAD/CAM, physics simulation, and motion control solutio
 
 <img src="doc/alumina-diagram.png" width="50%" alt="Diagram"/>
 
-<img src="doc/screenshot-control.png" width="30%" alt="Control screenshot"/><img src="doc/screenshot-design.png" width="30%" alt="Design screenshot"/><img src="doc/screenshot-diagnostics.png" width="30%" alt="Diagnostics screenshot"/>
+<img src="doc/screenshot-design.png" width="30%" alt="Design screenshot"/><img src="doc/screenshot-control.png" width="30%" alt="Control screenshot"/><img src="doc/screenshot-diagnostics.png" width="30%" alt="Diagnostics screenshot"/>
 
 Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the link.
 
