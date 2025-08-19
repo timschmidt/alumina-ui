@@ -47,4 +47,3 @@ trunk serve --open --release
 - ensure font picker in truetype text node works / gets pre-populated
 - ensure pin logging works for OUTPUT and INPUT modes and reports apropriately per-pin
 - add command stream to architecture graphic
-- API documentation
