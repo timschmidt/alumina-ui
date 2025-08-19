@@ -11,6 +11,16 @@ Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the lin
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
 
+## HTTP API
+  /							GET index.html
+  /alumina-ui.js			GET alumina-ui.js
+  /alumina-ui.html			GET alumina-ui.html.gz
+  /alumina-ui_bg.wasm		GET alumina-ui_bg.wasm.br
+  /favicon.ico				GET favaicon.gif
+  /time						GET 
+  /files					POST 
+  /queue					GET, POST 
+
 ## Development
 ### Set up toolchain
 ```shell
