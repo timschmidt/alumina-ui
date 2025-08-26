@@ -4,7 +4,9 @@
 
 Alumina is an integrated CAD/CAM, physics simulation, and motion control solution written entirely in Rust.  It is intended to control laser and plasma cutters, 3D printers, CNC routers and mills, and lathes.
 
-There are two parts to Alumina:
+Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the link.
+
+The two parts of Alumina are linked together at compile time and fit in the onboard flash of a microcontroller, reducing design complexity, part count, and cost.
  - [firmware](https://github.com/timschmidt/alumina-firmware)
    - targets the xtensa and risc-v esp32 microcontrollers
    - sets up a Wifi AP called "Alumina"
@@ -17,10 +19,6 @@ There are two parts to Alumina:
    - manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs)
 
 <img src="doc/alumina-diagram.png" width="40%" alt="Diagram"/>
-
-Both parts are linked together at compile time and fit in the onboard flash of the microcontroller, reducing design complexity, part count, and cost.
-
-Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the link.
 
 ## Community
 [![](https://dcbadge.limes.pink/api/server/https://discord.gg/cCHRjpkPhQ)](https://discord.gg/cCHRjpkPhQ)
