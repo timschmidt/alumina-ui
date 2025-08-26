@@ -21,6 +21,8 @@ Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the lin
 /time					GET 
 /files					POST 
 /queue					GET, POST 
+/board					GET json: {{"name":"{}","image_mime":"{}","image_url":"/board/image"}}
+/board/image			GET PNG formatted board image
 ```
 
 ## Development
@@ -47,3 +49,5 @@ trunk serve --open --release
 - ensure font picker in truetype text node works / gets pre-populated
 - ensure pin logging works for OUTPUT and INPUT modes and reports apropriately per-pin
 - add command stream to architecture graphic
+- switch to shift-scroll for zoom, so two-finger scroll can be used for pan in X and Y for mobile
+- figure out improper rendering in Chrome Android Pixel 6a
