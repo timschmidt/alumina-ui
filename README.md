@@ -1,5 +1,3 @@
-<img src="doc/alumina-diagram.png" width="40%" alt="Diagram"/>
-
 # Alumina UI
 
 <img src="doc/screenshot-design.png" width="30%" alt="Design screenshot"/> <img src="doc/screenshot-control.png" width="30%" alt="Control screenshot"/> <img src="doc/screenshot-diagnostics.png" width="30%" alt="Diagnostics screenshot"/>
@@ -17,6 +15,8 @@ There are two parts to Alumina:
    - targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly)
    - draws geometry using WebGL and egui
    - manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs)
+
+<img src="doc/alumina-diagram.png" width="40%" alt="Diagram"/>
 
 Both parts are linked together at compile time and fit in the onboard flash of the microcontroller, reducing design complexity, part count, and cost.
 
