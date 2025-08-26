@@ -10,7 +10,7 @@ There are two parts to Alumina:
    - sets up a Wifi AP called "Alumina"
    - serves the Alumina UI via HTTP
    - responds to commands from the Alumina UI via HTTP
-   - performs motion planning and step generation.
+   - performs motion planning and step generation
  - [UI](https://github.com/timschmidt/alumina-ui)
    - targets [WebAssembly](https://en.wikipedia.org/wiki/WebAssembly)
    - draws geometry using WebGL and egui
