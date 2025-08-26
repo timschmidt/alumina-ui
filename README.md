@@ -2,6 +2,8 @@
 
 # Alumina UI
 
+<img src="doc/screenshot-design.png" width="30%" alt="Design screenshot"/> <img src="doc/screenshot-control.png" width="30%" alt="Control screenshot"/> <img src="doc/screenshot-diagnostics.png" width="30%" alt="Diagnostics screenshot"/>
+
 Alumina is an integrated CAD/CAM, physics simulation, and motion control solution written entirely in Rust.  It is intended to control laser and plasma cutters, 3D printers, CNC routers and mills, and lathes.
 
 There are two parts to Alumina:
@@ -17,8 +19,6 @@ There are two parts to Alumina:
    - manipulates geometry using [csgrs](https://github.com/timschmidt/csgrs)
 
 Both parts are linked together at compile time and fit in the onboard flash of the microcontroller, reducing design complexity, part count, and cost.
-
-<img src="doc/screenshot-design.png" width="30%" alt="Design screenshot"/> <img src="doc/screenshot-control.png" width="30%" alt="Control screenshot"/> <img src="doc/screenshot-diagnostics.png" width="30%" alt="Diagnostics screenshot"/>
 
 Try the [Web Demo](https://timschmidt.github.io/alumina-ui/) by clicking the link.
 
